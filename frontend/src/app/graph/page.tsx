@@ -1,211 +1,232 @@
 "use client";
 
-import { motion } from "framer-motion";
-import { Network, Search, Filter, ZoomIn, ZoomOut, Download, Users, Briefcase, ChevronRight, MapPin, CheckCircle, ExternalLink } from "lucide-react";
+import { useState, useMemo, useRef, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Network, Search, Filter, ZoomIn, ZoomOut, Download, Users, Briefcase, ChevronRight, MapPin, CheckCircle, ExternalLink, Info, Target as TargetIcon, Zap, ArrowUpRight } from "lucide-react";
+import dynamic from 'next/dynamic';
+import { useRouter } from "next/navigation";
+
+// Dynamically import force graph to avoid SSR issues
+const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
+
+// --- Mock Data ---
+const graphData = {
+  nodes: [
+    { id: 'JD', name: 'John Doe', type: 'internal', role: 'Partner', color: '#6366f1' },
+    { id: 'AS', name: 'Alice Smith', type: 'internal', role: 'Associate', color: '#6366f1' },
+    { id: 'MB', name: 'Marc Berenson', type: 'target', role: 'CEO, Aetherial SA', color: '#10b981' },
+    { id: 'TW', name: 'Thomas Wright', type: 'target', role: 'Founder, TechFlow', color: '#10b981' },
+    { id: 'SJ', name: 'Sarah Jenkins', type: 'advisor', role: 'MD, Lazard', color: '#f59e0b' },
+    { id: 'RJ', name: 'Robert Jones', type: 'advisor', role: 'Partner, PwC', color: '#f59e0b' },
+    { id: 'AL', name: 'Alice Laurent', type: 'target', role: 'CFO, NexSphere', color: '#10b981' },
+  ],
+  links: [
+    { source: 'JD', target: 'MB', label: 'Board Overlap', value: 3 },
+    { source: 'JD', target: 'SJ', label: 'Former Colleague', value: 2 },
+    { source: 'SJ', target: 'MB', label: 'Lead Advisor', value: 5 },
+    { source: 'AS', target: 'TW', label: 'Alumni Network', value: 1 },
+    { source: 'AS', target: 'AL', label: 'Relationship Path', value: 2 },
+    { source: 'MB', target: 'AL', label: 'Industry Peer', value: 1 },
+    { source: 'RJ', target: 'TW', label: 'Tax Advisory', value: 4 },
+  ]
+};
 
 export default function RelationshipGraph() {
+  const [selectedNode, setSelectedNode] = useState<any>(graphData.nodes[2]); // Default to Marc
+  const [search, setSearch] = useState("");
+  const fgRef = useRef<any>(null);
+  const router = useRouter();
+
+  // Filter nodes based on search
+  const filteredData = useMemo(() => {
+    if (!search) return graphData;
+    const nodes = graphData.nodes.filter(n => n.name.toLowerCase().includes(search.toLowerCase()));
+    const nodeIds = new Set(nodes.map(n => n.id));
+    const links = graphData.links.filter(l => nodeIds.has(l.source as string) || nodeIds.has(l.target as string));
+    return { nodes, links };
+  }, [search]);
+
   return (
-    <div className="flex flex-col h-[calc(100vh-2rem)] w-full max-w-7xl mx-auto pb-4">
+    <div className="flex flex-col h-[calc(100vh-4rem)] w-full max-w-7xl mx-auto pb-4 px-4 overflow-hidden">
       {/* Header */}
-      <header className="flex items-end justify-between mb-4">
+      <header className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6 pt-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-white mb-1 flex items-center gap-3">
-            <Network className="text-indigo-400" size={28} /> Network Intelligence Explorer
+          <h1 className="text-4xl font-black tracking-tight text-white mb-2 flex items-center gap-4">
+            <div className="p-2 rounded-2xl bg-indigo-500/10 border border-indigo-500/20">
+              <Network size={32} className="text-indigo-400" />
+            </div>
+            Network Intelligence
           </h1>
-          <p className="text-gray-400 text-sm">
-            AI-mapped relationship graph connecting LP limited partners, advisors, and target executives.
+          <p className="text-gray-400 text-sm font-medium">
+            Proprietary relationship mapping identifying warm entry paths to C-level targets.
           </p>
         </div>
         
         <div className="flex gap-3">
-          <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
-               <Search size={16} />
+          <div className="relative group">
+            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 group-focus-within:text-indigo-400 transition-colors">
+               <Search size={18} />
             </span>
             <input 
                type="text" 
-               placeholder="Search nodes..." 
-               className="w-64 bg-[#ffffff05] border border-[#ffffff10] rounded-lg py-2 pl-10 pr-4 text-sm text-gray-300 placeholder-gray-500 outline-none focus:border-indigo-500/50 focus:bg-[#ffffff0a] transition-all"
+               value={search}
+               onChange={(e) => setSearch(e.target.value)}
+               placeholder="Search entities or path nodes..." 
+               className="w-80 bg-white/[0.03] border border-white/10 rounded-2xl py-3 pl-12 pr-4 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-indigo-500/50 focus:bg-white/[0.05] transition-all"
             />
           </div>
-          <button className="px-4 py-2 rounded-lg bg-[#ffffff0a] border border-[#ffffff10] text-sm font-medium text-white hover:bg-[#ffffff15] transition-all flex items-center gap-2">
-            <Filter size={16} /> Filters
+          <button className="px-5 py-3 rounded-2xl bg-white/[0.03] border border-white/10 text-sm font-bold text-white hover:bg-white/10 transition-all flex items-center gap-2">
+            <Filter size={18} /> Relationship Depth
           </button>
         </div>
       </header>
 
       {/* Main content grid */}
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-4 gap-6 min-h-0">
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-4 gap-8 min-h-0">
         
         {/* Graph Area */}
-        <div className="lg:col-span-3 rounded-2xl bg-[#050505] border border-[#ffffff10] relative overflow-hidden flex flex-col group shadow-[0_4px_30px_rgba(0,0,0,0.5)]">
-          {/* Controls */}
-          <div className="absolute top-4 right-4 flex flex-col gap-2 z-10">
-            <button className="w-8 h-8 rounded-lg bg-[#ffffff10] text-gray-400 hover:text-white hover:bg-[#ffffff20] transition-colors flex items-center justify-center border border-[#ffffff0a] backdrop-blur-md">
-               <ZoomIn size={16} />
-            </button>
-            <button className="w-8 h-8 rounded-lg bg-[#ffffff10] text-gray-400 hover:text-white hover:bg-[#ffffff20] transition-colors flex items-center justify-center border border-[#ffffff0a] backdrop-blur-md">
-               <ZoomOut size={16} />
-            </button>
-            <button className="w-8 h-8 rounded-lg bg-[#ffffff10] text-gray-400 hover:text-white hover:bg-[#ffffff20] transition-colors flex items-center justify-center border border-[#ffffff0a] backdrop-blur-md mt-4">
-               <Network size={16} />
-            </button>
-          </div>
-
-          <div className="absolute top-4 left-4 z-10 flex gap-2">
-             <div className="px-3 py-1.5 rounded-lg bg-black/60 border border-[#ffffff10] backdrop-blur-md text-xs font-semibold text-gray-300 flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-indigo-500" /> Internal Team
+        <div className="lg:col-span-3 rounded-[2.5rem] bg-[#050505] border border-white/10 relative overflow-hidden flex flex-col group shadow-[0_4px_50px_rgba(0,0,0,0.8)] backdrop-blur-xl">
+          {/* Legend */}
+          <div className="absolute top-6 left-6 z-10 flex flex-col gap-3">
+             <div className="px-4 py-2 rounded-2xl bg-black/40 border border-white/10 backdrop-blur-md text-[10px] uppercase font-black tracking-widest text-gray-400 flex items-center gap-3">
+                <div className="w-2 h-2 rounded-full bg-[#6366f1] animate-pulse" /> Internal Team
              </div>
-             <div className="px-3 py-1.5 rounded-lg bg-black/60 border border-[#ffffff10] backdrop-blur-md text-xs font-semibold text-gray-300 flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-emerald-500" /> Target C-Level
+             <div className="px-4 py-2 rounded-2xl bg-black/40 border border-white/10 backdrop-blur-md text-[10px] uppercase font-black tracking-widest text-gray-400 flex items-center gap-3">
+                <div className="w-2 h-2 rounded-full bg-[#10b981]" /> Target C-Level
              </div>
-             <div className="px-3 py-1.5 rounded-lg bg-black/60 border border-[#ffffff10] backdrop-blur-md text-xs font-semibold text-gray-300 flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-amber-500" /> Advisors
+             <div className="px-4 py-2 rounded-2xl bg-black/40 border border-white/10 backdrop-blur-md text-[10px] uppercase font-black tracking-widest text-gray-400 flex items-center gap-3">
+                <div className="w-2 h-2 rounded-full bg-[#f59e0b]" /> Advisors
              </div>
           </div>
 
-          {/* D3 Mock Background */}
-          <div className="flex-1 w-full h-full relative" style={{ backgroundImage: "radial-gradient(#ffffff05 1px, transparent 1px)", backgroundSize: "30px 30px" }}>
-             {/* Center Node */}
-             <motion.div 
-               initial={{ scale: 0 }} 
-               animate={{ scale: 1 }} 
-               className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
-             >
-                <div className="w-16 h-16 rounded-full bg-indigo-600 border-4 border-[#050505] shadow-[0_0_30px_rgba(99,102,241,0.5)] z-20 relative flex items-center justify-center cursor-pointer">
-                  <span className="text-white font-bold text-lg">JD</span>
-                </div>
-                <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 text-center w-32 pb-4">
-                  <div className="text-xs font-bold text-white">John Doe</div>
-                  <div className="text-[10px] text-indigo-400 uppercase tracking-wider">Partner</div>
-                </div>
-             </motion.div>
+          <div className="absolute top-6 right-6 z-10 flex flex-col gap-2">
+             <button onClick={() => fgRef.current?.zoomToFit(400)} className="w-10 h-10 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/10 transition-all">
+                <Download size={18} />
+             </button>
+          </div>
 
-             {/* Node 1 */}
-             <svg className="absolute top-0 left-0 w-full h-full pointer-events-none z-0">
-               <motion.line initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} x1="50%" y1="50%" x2="30%" y2="30%" stroke="#ffffff15" strokeWidth="2" strokeDasharray="4 4" />
-               <motion.line initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} x1="50%" y1="50%" x2="70%" y2="25%" stroke="rgba(99,102,241,0.4)" strokeWidth="2" />
-               <motion.line initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} x1="70%" y1="25%" x2="80%" y2="50%" stroke="#ffffff20" strokeWidth="1" />
-               <motion.line initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} x1="50%" y1="50%" x2="40%" y2="70%" stroke="#ffffff15" strokeWidth="2" />
-               <motion.line initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} x1="40%" y1="70%" x2="65%" y2="80%" stroke="#ffffff20" strokeWidth="1" />
-             </svg>
+          {/* Real Graph Component */}
+          <div className="flex-1 w-full h-full">
+            <ForceGraph2D
+              ref={fgRef}
+              graphData={filteredData}
+              backgroundColor="#050505"
+              nodeLabel="name"
+              nodeColor={node => (node as any).color}
+              nodeRelSize={7}
+              linkColor={() => "rgba(255,255,255,0.08)"}
+              linkWidth={link => (link as any).value}
+              onNodeClick={(node) => setSelectedNode(node)}
+              nodeCanvasObject={(node: any, ctx, globalScale) => {
+                const label = node.name;
+                const fontSize = 12 / globalScale;
+                ctx.font = `${fontSize}px Inter, sans-serif`;
+                const textWidth = ctx.measureText(label).width;
+                const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.5);
 
-             {/* Connecting Nodes */}
-             <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ delay: 0.1 }} className="absolute top-[30%] left-[30%] -translate-x-1/2 -translate-y-1/2 cursor-pointer z-10">
-                <div className="w-12 h-12 rounded-full bg-[#111] border-2 border-amber-500 shadow-[0_0_20px_rgba(245,158,11,0.2)] flex items-center justify-center">
-                  <span className="text-amber-500 font-bold text-xs">SJ</span>
-                </div>
-                <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 text-center w-24">
-                  <div className="text-[10px] font-bold text-gray-200">Sarah Jenkins</div>
-                </div>
-             </motion.div>
+                // Draw circle
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, 6, 0, 2 * Math.PI, false);
+                ctx.fillStyle = node.color;
+                ctx.fill();
+                
+                // Active ring
+                if (selectedNode?.id === node.id) {
+                  ctx.beginPath();
+                  ctx.arc(node.x, node.y, 9, 0, 2 * Math.PI, false);
+                  ctx.strokeStyle = node.color;
+                  ctx.lineWidth = 2 / globalScale;
+                  ctx.stroke();
+                }
 
-             <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ delay: 0.2 }} className="absolute top-[25%] left-[70%] -translate-x-1/2 -translate-y-1/2 cursor-pointer z-10">
-                <div className="w-14 h-14 rounded-full bg-[#111] border-2 border-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.3)] flex items-center justify-center ring-4 ring-emerald-500/20">
-                  <span className="text-emerald-500 font-bold text-sm">MB</span>
-                </div>
-                <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 text-center w-32">
-                  <div className="text-[10px] font-bold text-white">Marc Berenson</div>
-                  <div className="text-[9px] text-emerald-400">CEO, Target A</div>
-                </div>
-             </motion.div>
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = 'rgba(255,255,255,0.8)';
+                ctx.font = `bold ${fontSize}px sans-serif`;
+                ctx.fillText(label, node.x, node.y + 12);
+              }}
+            />
+          </div>
 
-             <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ delay: 0.3 }} className="absolute top-[50%] left-[80%] -translate-x-1/2 -translate-y-1/2 cursor-pointer z-10">
-                <div className="w-10 h-10 rounded-full bg-[#111] border-2 border-gray-600 flex items-center justify-center">
-                  <span className="text-gray-400 font-bold text-xs">RJ</span>
-                </div>
-             </motion.div>
-
-             <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ delay: 0.4 }} className="absolute top-[70%] left-[40%] -translate-x-1/2 -translate-y-1/2 cursor-pointer z-10">
-                <div className="w-12 h-12 rounded-full bg-[#111] border-2 border-amber-500 flex items-center justify-center">
-                  <span className="text-amber-500 font-bold text-xs">AL</span>
-                </div>
-                <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 text-center w-24">
-                  <div className="text-[10px] font-bold text-gray-200">Alice L.</div>
-                </div>
-             </motion.div>
-
-             <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ delay: 0.5 }} className="absolute top-[80%] left-[65%] -translate-x-1/2 -translate-y-1/2 cursor-pointer z-10">
-                <div className="w-12 h-12 rounded-full bg-[#111] border-2 border-emerald-500 flex items-center justify-center">
-                  <span className="text-emerald-500 font-bold text-xs">TW</span>
-                </div>
-                <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 text-center w-24">
-                  <div className="text-[10px] font-bold text-gray-200">Thomas W.</div>
-                </div>
-             </motion.div>
-
+          <div className="absolute bottom-6 left-6 z-10">
+             <div className="px-4 py-2 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 backdrop-blur-md text-[10px] tracking-widest uppercase font-black text-indigo-400 flex items-center gap-2">
+                <Info size={14} /> Intelligence Overlay Active: 14M Overlaps
+             </div>
           </div>
         </div>
 
         {/* Node Detail Sidebar */}
-        <div className="rounded-2xl bg-black/40 border border-[#ffffff10] backdrop-blur-md p-5 flex flex-col overflow-y-auto shadow-xl">
-           <div className="flex items-start justify-between mb-6">
-              <div className="flex items-center gap-3">
-                 <div className="w-12 h-12 rounded-full bg-emerald-900/30 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-lg">
-                    MB
-                 </div>
-                 <div>
-                    <h2 className="text-white font-bold text-lg leading-tight">Marc Berenson</h2>
-                    <p className="text-emerald-400 text-xs font-semibold uppercase tracking-wider">Target C-Level</p>
-                 </div>
-              </div>
-           </div>
+        <AnimatePresence mode="wait">
+          <motion.div 
+            key={selectedNode?.id}
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="rounded-[2.5rem] bg-black/40 border border-white/10 backdrop-blur-xl p-8 flex flex-col overflow-y-auto shadow-2xl space-y-8"
+          >
+            {selectedNode ? (
+              <>
+                <div className="space-y-4">
+                  <div className="w-16 h-16 rounded-[1.5rem] bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-white font-black text-2xl shadow-[0_0_20px_rgba(99,102,241,0.2)]">
+                    {selectedNode.name.split(' ').map((n: any) => n[0]).join('')}
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-black text-white leading-tight tracking-tighter">{selectedNode.name}</h2>
+                    <p className="text-indigo-400 text-[10px] font-black uppercase tracking-widest mt-1 opacity-80">{selectedNode.role}</p>
+                  </div>
+                </div>
 
-           <div className="space-y-4 flex-1">
-              <div className="p-4 rounded-xl bg-[#ffffff05] border border-[#ffffff0a]">
-                 <div className="flex items-center gap-2 text-sm text-gray-300 mb-2">
-                    <Briefcase size={14} className="text-gray-500" /> 
-                    <span className="font-medium text-white">CEO</span> at <span className="text-indigo-300">Aetherial SA</span>
-                 </div>
-                 <div className="flex items-center gap-2 text-sm text-gray-400">
-                    <MapPin size={14} className="text-gray-500" /> Paris, France
-                 </div>
-              </div>
+                <div className="grid grid-cols-2 gap-3">
+                   <div className="p-4 rounded-3xl bg-white/[0.03] border border-white/5 space-y-1">
+                      <div className="text-[9px] font-black text-gray-600 uppercase tracking-widest">Strength</div>
+                      <div className="text-sm font-black text-white">84% Path</div>
+                   </div>
+                   <div className="p-4 rounded-3xl bg-white/[0.03] border border-white/5 space-y-1">
+                      <div className="text-[9px] font-black text-gray-600 uppercase tracking-widest">Context</div>
+                      <div className="text-sm font-black text-white">Market-Direct</div>
+                   </div>
+                </div>
 
-              <div>
-                 <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Strongest Path</h3>
-                 <div className="p-3 rounded-xl bg-[#ffffff02] border border-[#ffffff05] border-l-2 border-l-indigo-500 relative">
-                    <div className="absolute -left-[5px] top-4 w-3 h-3 rounded-full bg-indigo-500 border-2 border-[#050505]" />
-                    <div className="absolute -left-[5px] bottom-5 w-3 h-3 rounded-full bg-emerald-500 border-2 border-[#050505]" />
-                    <div className="pl-3 space-y-4">
-                       <div>
-                          <div className="text-xs text-indigo-400 font-medium">John Doe</div>
-                          <div className="text-[10px] text-gray-500 mt-0.5">Internal Partner</div>
-                       </div>
-                       <div className="py-1">
-                          <div className="h-4 w-px bg-gradient-to-b from-indigo-500/50 to-emerald-500/50 ml-1" />
-                       </div>
-                       <div>
-                          <div className="text-xs text-white font-medium">Marc Berenson</div>
-                          <div className="text-[10px] text-gray-500 mt-0.5">Board member overlap via TechFlow</div>
-                       </div>
+                <div className="space-y-4">
+                  <h3 className="text-[10px] font-black text-gray-600 uppercase tracking-[0.2em]">Contact Metadata</h3>
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-4 text-sm">
+                      <div className="w-8 h-8 rounded-xl bg-white/5 flex items-center justify-center text-gray-500"><MapPin size={16} /></div>
+                      <span className="text-gray-300 font-bold">Paris, France</span>
                     </div>
-                 </div>
-              </div>
-
-              <div>
-                 <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">AI Context Signals</h3>
-                 <div className="space-y-2">
-                    <div className="p-3 rounded-xl bg-[#ffffff05] border border-[#ffffff0a] flex items-start gap-2">
-                       <CheckCircle size={14} className="text-emerald-400 mt-0.5 shrink-0" />
-                       <div className="text-xs text-gray-300 leading-relaxed">Attended the Industrial Leaders Summit last month. John Doe is also an alumni.</div>
+                    <div className="flex items-center gap-4 text-sm">
+                      <div className="w-8 h-8 rounded-xl bg-white/5 flex items-center justify-center text-gray-500"><Briefcase size={16} /></div>
+                      <span className="text-gray-300 font-bold">Industry Concentration: Industrial Tech</span>
                     </div>
-                    <div className="p-3 rounded-xl bg-[#ffffff05] border border-[#ffffff0a] flex items-start gap-2">
-                       <CheckCircle size={14} className="text-emerald-400 mt-0.5 shrink-0" />
-                       <div className="text-xs text-gray-300 leading-relaxed">Approaching retirement age (63). Likely considering succession planning.</div>
-                    </div>
-                 </div>
-              </div>
-           </div>
+                  </div>
+                </div>
 
-           <div className="pt-4 mt-2 border-t border-[#ffffff10]">
-              <button className="w-full py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-all shadow-[0_0_15px_rgba(99,102,241,0.4)] flex items-center justify-center gap-2">
-                 Generate Briefing <ExternalLink size={16} />
-              </button>
-           </div>
-        </div>
+                <div className="space-y-4">
+                   <h3 className="text-[10px] font-black text-gray-600 uppercase tracking-[0.2em]">AI Path Intelligence</h3>
+                   <div className="p-4 rounded-3xl bg-indigo-500/5 border border-indigo-500/10 flex gap-3">
+                      <Zap size={18} className="text-indigo-400 shrink-0" />
+                      <p className="text-xs text-gray-400 leading-relaxed font-medium">
+                        Strong proximity via <span className="text-white font-bold">Lazard advisory board</span>. Berenson attended the same Executive Forum as John Doe in 2023.
+                      </p>
+                   </div>
+                </div>
+
+                <div className="pt-6 mt-auto">
+                  <button onClick={() => router.push(`/targets/${selectedNode.id}`)} className="w-full py-4 rounded-[1.5rem] bg-white text-black font-black text-xs uppercase tracking-widest hover:bg-indigo-500 hover:text-white transition-all shadow-[0_10px_30px_rgba(0,0,0,0.2)] flex items-center justify-center gap-3">
+                     View Deep Intelligence <ArrowUpRight size={18} />
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center text-center opacity-40">
+                 <TargetIcon size={48} className="mb-4 text-gray-600" />
+                 <p className="text-sm font-bold text-gray-500 uppercase tracking-widest">Select a node to extract relationship intelligence</p>
+              </div>
+            )}
+          </motion.div>
+        </AnimatePresence>
 
       </div>
     </div>
   );
 }
+

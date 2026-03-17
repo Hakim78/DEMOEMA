@@ -1,13 +1,22 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Search, Command, Target, Zap, Activity, Users, X } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
+import { Search, Command, Target, Zap, Activity, Users, X, Building, ArrowRight } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
+
+interface SearchResult {
+  id: string;
+  name: string;
+  sector: string;
+  type: "page" | "target";
+  path: string;
+}
 
 export function CommandPalette() {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [targets, setTargets] = useState<SearchResult[]>([]);
   const router = useRouter();
 
   useEffect(() => {
@@ -16,21 +25,47 @@ export function CommandPalette() {
         e.preventDefault();
         setIsOpen((open) => !open);
       }
+      if (e.key === "Escape") {
+        setIsOpen(false);
+      }
     };
     document.addEventListener("keydown", down);
     return () => document.removeEventListener("keydown", down);
   }, []);
 
-  const items = [
-    { id: "dashboard", name: "Dashboard", icon: Command, path: "/" },
-    { id: "targets", name: "Targets Directory", icon: Target, path: "/targets" },
-    { id: "pipeline", name: "Origination Pipeline", icon: Zap, path: "/pipeline" },
-    { id: "signals", name: "Market Signals Feed", icon: Activity, path: "/signals" },
-    { id: "graph", name: "Relationship Explorer", icon: Users, path: "/graph" },
+  // Fetch targets when searching
+  useEffect(() => {
+    if (search.length > 1) {
+      fetch("http://localhost:8000/api/targets")
+        .then(res => res.json())
+        .then(data => {
+          const results: SearchResult[] = data.data
+            .filter((t: any) => t.name.toLowerCase().includes(search.toLowerCase()))
+            .map((t: any) => ({
+              id: t.id,
+              name: t.name,
+              sector: t.sector,
+              type: "target",
+              path: `/targets/${t.id}`
+            }));
+          setTargets(results);
+        });
+    } else {
+      setTargets([]);
+    }
+  }, [search]);
+
+  const pages: SearchResult[] = [
+    { id: "dashboard", name: "Dashboard", sector: "Overview", type: "page", path: "/" },
+    { id: "targets-dir", name: "Targets Directory", sector: "Intelligence", type: "page", path: "/targets" },
+    { id: "pipeline", name: "Origination Pipeline", sector: "Deals", type: "page", path: "/pipeline" },
+    { id: "signals", name: "Market Signals Feed", sector: "Signals", type: "page", path: "/signals" },
+    { id: "graph", name: "Relationship Explorer", sector: "Networking", type: "page", path: "/graph" },
   ];
 
-  const filteredItems = items.filter((item) =>
-    item.name.toLowerCase().includes(search.toLowerCase())
+  const filteredPages = useMemo(() => 
+    pages.filter(p => p.name.toLowerCase().includes(search.toLowerCase())),
+    [search]
   );
 
   return (
@@ -42,69 +77,128 @@ export function CommandPalette() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={() => setIsOpen(false)}
-            className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100]"
+            className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100]"
           />
           <motion.div
             initial={{ opacity: 0, scale: 0.95, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            className="fixed left-1/2 top-[15%] -translate-x-1/2 w-full max-w-2xl bg-[#0a0a0a] border border-white/10 rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.5)] z-[101] overflow-hidden"
+            className="fixed left-1/2 top-[15%] -translate-x-1/2 w-full max-w-2xl bg-[#0a0a0a] border border-white/10 rounded-2xl shadow-[0_0_80px_rgba(0,0,0,0.8)] z-[101] overflow-hidden"
           >
-            <div className="flex items-center gap-3 p-4 border-b border-white/10">
-              <Search className="text-gray-500" size={20} />
+            <div className="flex items-center gap-4 p-5 border-b border-white/10">
+              <Search className="text-indigo-500" size={24} />
               <input
                 autoFocus
-                placeholder="Search anything... (Targets, Pages, Signals)"
-                className="flex-1 bg-transparent border-none outline-none text-white text-lg placeholder-gray-600"
+                placeholder="Search entities, signals, patterns..."
+                className="flex-1 bg-transparent border-none outline-none text-white text-xl placeholder-gray-600 font-medium"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
-              <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-white/5 border border-white/10 text-[10px] text-gray-500 font-bold">
-                ESC
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-[10px] text-gray-500 font-black tracking-widest uppercase">
+                ESC Close
               </div>
             </div>
 
-            <div className="p-2">
-              <div className="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-widest">
-                Quick Navigation
-              </div>
-              <div className="space-y-1">
-                {filteredItems.map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => {
-                      router.push(item.path);
-                      setIsOpen(false);
-                      setSearch("");
-                    }}
-                    className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-white/5 group transition-all"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 rounded-lg bg-white/5 group-hover:bg-indigo-500/10 group-hover:text-indigo-400 transition-all">
-                        <item.icon size={18} />
-                      </div>
-                      <span className="text-gray-300 group-hover:text-white font-medium">
-                        {item.name}
-                      </span>
-                    </div>
-                    <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Command size={14} className="text-gray-600" />
-                    </div>
-                  </button>
-                ))}
-                {filteredItems.length === 0 && (
-                  <div className="p-8 text-center text-gray-500">
-                    No results found for "{search}"
+            <div className="max-h-[450px] overflow-y-auto p-4 custom-scrollbar">
+              
+              {/* Pages Section */}
+              {filteredPages.length > 0 && (
+                <div className="mb-6">
+                  <div className="px-3 py-2 text-[10px] font-black text-gray-500 uppercase tracking-[0.2em] mb-2">
+                    System Navigation
                   </div>
-                )}
-              </div>
+                  <div className="space-y-1">
+                    {filteredPages.map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => {
+                          router.push(item.path);
+                          setIsOpen(false);
+                          setSearch("");
+                        }}
+                        className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-white/5 group transition-all text-left"
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className="w-10 h-10 rounded-xl bg-white/5 border border-white/5 flex items-center justify-center text-gray-500 group-hover:text-indigo-400 group-hover:bg-indigo-500/10 group-hover:border-indigo-500/20 transition-all">
+                            {item.id === 'dashboard' && <Command size={18} />}
+                            {item.id === 'targets-dir' && <Target size={18} />}
+                            {item.id === 'pipeline' && <Zap size={18} />}
+                            {item.id === 'signals' && <Activity size={18} />}
+                            {item.id === 'graph' && <Users size={18} />}
+                          </div>
+                          <div>
+                            <span className="text-gray-200 group-hover:text-white font-bold block leading-none mb-1">
+                              {item.name}
+                            </span>
+                            <span className="text-[10px] font-bold text-gray-600 uppercase tracking-widest">{item.sector}</span>
+                          </div>
+                        </div>
+                        <ArrowRight size={16} className="text-gray-700 opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Targets Section */}
+              {targets.length > 0 && (
+                <div>
+                  <div className="px-3 py-2 text-[10px] font-black text-gray-500 uppercase tracking-[0.2em] mb-2">
+                    Intelligence Entities
+                  </div>
+                  <div className="space-y-1">
+                    {targets.map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => {
+                          router.push(item.path);
+                          setIsOpen(false);
+                          setSearch("");
+                        }}
+                        className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-white/5 group transition-all text-left"
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className="w-10 h-10 rounded-xl bg-white/5 border border-white/5 flex items-center justify-center text-gray-500 group-hover:text-indigo-400 group-hover:bg-indigo-500/10 group-hover:border-indigo-500/20 transition-all">
+                            <Building size={18} />
+                          </div>
+                          <div>
+                            <span className="text-gray-200 group-hover:text-white font-bold block leading-none mb-1">
+                              {item.name}
+                            </span>
+                            <span className="text-[10px] font-bold text-indigo-400/60 uppercase tracking-widest">{item.sector}</span>
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-end opacity-0 group-hover:opacity-100 transition-opacity">
+                           <span className="text-[9px] font-black text-white px-2 py-0.5 rounded bg-indigo-600 uppercase tracking-widest">Open Intel</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {filteredPages.length === 0 && targets.length === 0 && (
+                <div className="p-12 text-center text-gray-500 flex flex-col items-center gap-4">
+                  <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center border border-white/10">
+                    <Search size={32} className="opacity-20" />
+                  </div>
+                  <div>
+                    <p className="font-bold text-white mb-1">No intelligence matches.</p>
+                    <p className="text-sm">Try searching for a company name, sector, or systemic trigger.</p>
+                  </div>
+                </div>
+              )}
             </div>
 
-            <div className="p-3 bg-white/[0.02] border-t border-white/10 flex justify-between items-center text-[10px] font-bold text-gray-600 uppercase tracking-widest">
-              <span>Shortcuts: ↵ Select • ↑↓ Navigate • ESC Close</span>
-              <span className="flex items-center gap-1">
-                Origination Platform <span className="text-indigo-500/50">v0.1.0</span>
-              </span>
+            <div className="p-4 bg-white/[0.02] border-t border-white/10 flex justify-between items-center text-[10px] font-black text-gray-600 uppercase tracking-widest">
+              <div className="flex gap-4">
+                <span>↵ Select</span>
+                <span>↑↓ Navigate</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,1)]" />
+                Aethelgard Core Engine
+              </div>
             </div>
           </motion.div>
         </>
@@ -112,3 +206,4 @@ export function CommandPalette() {
     </AnimatePresence>
   );
 }
+

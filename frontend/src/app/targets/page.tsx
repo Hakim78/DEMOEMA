@@ -1,13 +1,32 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { motion } from "framer-motion";
-import { Target, Search, Filter, ArrowUpDown, ChevronRight, Building } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Target, Search, Filter, ArrowUpDown, ChevronRight, Building, Download, SlidersHorizontal, X, Check, Globe, Shield } from "lucide-react";
 import { useRouter } from "next/navigation";
 
+// --- Types ---
+interface TargetData {
+  id: string;
+  name: string;
+  sector: string;
+  priorityScore: number;
+  dealType: string;
+  timeframe: string;
+}
+
+type SortKey = "name" | "sector" | "dealType" | "priorityScore";
+
 export default function TargetsPage() {
-  const [targets, setTargets] = useState<any[]>([]);
+  const [targets, setTargets] = useState<TargetData[]>([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey>("priorityScore");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+  const [showFilters, setShowFilters] = useState(false);
+  const [selectedSectors, setSelectedSectors] = useState<string[]>([]);
+  const [minScore, setMinScore] = useState(40);
+  
   const router = useRouter();
 
   useEffect(() => {
@@ -23,136 +42,276 @@ export default function TargetsPage() {
       });
   }, []);
 
+  const sectors = useMemo(() => Array.from(new Set(targets.map(t => t.sector))), [targets]);
+
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortOrder(sortOrder === "asc" ? "desc" : "asc");
+    } else {
+      setSortKey(key);
+      setSortOrder("desc");
+    }
+  };
+
+  const filteredAndSortedTargets = useMemo(() => {
+    return targets
+      .filter(t => 
+        (t.name.toLowerCase().includes(search.toLowerCase()) ||
+         t.sector.toLowerCase().includes(search.toLowerCase()) ||
+         t.dealType.toLowerCase().includes(search.toLowerCase())) &&
+        (selectedSectors.length === 0 || selectedSectors.includes(t.sector)) &&
+        t.priorityScore >= minScore
+      )
+      .sort((a, b) => {
+        const valA = a[sortKey];
+        const valB = b[sortKey];
+        if (typeof valA === "string" && typeof valB === "string") {
+          return sortOrder === "asc" 
+            ? valA.localeCompare(valB) 
+            : valB.localeCompare(valA);
+        }
+        return sortOrder === "asc" 
+          ? (valA as number) - (valB as number) 
+          : (valB as number) - (valA as number);
+      });
+  }, [targets, search, sortKey, sortOrder, selectedSectors, minScore]);
+
   return (
-    <div className="flex flex-col gap-6 w-full max-w-7xl mx-auto h-[calc(100vh-2rem)]">
+    <div className="flex flex-col gap-10 w-full max-w-7xl mx-auto py-4 h-[calc(100vh-8rem)]">
+      
+      {/* Filter Sidebar Overlay */}
+      <AnimatePresence>
+        {showFilters && (
+          <>
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowFilters(false)}
+              className="fixed inset-0 bg-black/80 backdrop-blur-xl z-[100]"
+            />
+            <motion.div 
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              className="fixed top-0 right-0 bottom-0 w-96 bg-[#0a0a0a] border-l border-white/10 z-[101] p-10 shadow-[0_0_100px_rgba(0,0,0,0.8)] flex flex-col"
+            >
+              <div className="flex items-center justify-between mb-10">
+                <h2 className="text-2xl font-black text-white uppercase tracking-tighter">Engine Filters</h2>
+                <button onClick={() => setShowFilters(false)} className="p-3 rounded-2xl bg-white/5 text-gray-400 hover:text-white transition-all active:scale-95">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="space-y-10 flex-1 overflow-y-auto custom-scrollbar pr-2">
+                 <div>
+                    <h3 className="text-[11px] font-black text-white uppercase tracking-[0.2em] mb-6 flex items-center gap-2">
+                        <Globe size={14} className="text-indigo-500" /> Sectors
+                    </h3>
+                    <div className="flex flex-wrap gap-2.5">
+                       {sectors.map(s => (
+                         <button 
+                           key={s}
+                           onClick={() => setSelectedSectors(curr => curr.includes(s) ? curr.filter(x => x !== s) : [...curr, s])}
+                           className={`px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border
+                             ${selectedSectors.includes(s) 
+                               ? "bg-indigo-500 border-indigo-400 text-white shadow-[0_0_20px_rgba(79,70,229,0.3)]" 
+                               : "bg-white/5 border-white/10 text-gray-500 hover:bg-white/10 hover:text-gray-300"
+                             }
+                           `}
+                         >
+                           {s}
+                         </button>
+                       ))}
+                    </div>
+                 </div>
+
+                 <div>
+                    <div className="flex justify-between items-center mb-6">
+                       <h3 className="text-[11px] font-black text-white uppercase tracking-[0.2em] flex items-center gap-2">
+                           <Shield size={14} className="text-indigo-500" /> Confidence Threshold
+                       </h3>
+                       <span className="text-2xl font-black text-indigo-400">{minScore}</span>
+                    </div>
+                    <input 
+                      type="range" 
+                      min="0" max="100" 
+                      value={minScore}
+                      onChange={(e) => setMinScore(parseInt(e.target.value))}
+                      className="w-full accent-indigo-500 h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer"
+                    />
+                    <div className="flex justify-between mt-3 text-[9px] font-black text-gray-700 uppercase tracking-widest">
+                        <span>Min Confidence</span>
+                        <span>High Priority Only</span>
+                    </div>
+                 </div>
+              </div>
+
+              <div className="pt-10 border-t border-white/10 mt-auto">
+                 <button 
+                   onClick={() => {
+                     setSelectedSectors([]);
+                     setMinScore(40);
+                   }}
+                   className="w-full py-4 rounded-3xl bg-white/5 border border-white/10 text-[11px] font-black uppercase text-gray-500 hover:bg-rose-500/10 hover:text-rose-400 hover:border-rose-500/20 transition-all tracking-widest active:scale-95"
+                 >
+                   Reset Scoping
+                 </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
       {/* Header */}
-      <header className="flex items-end justify-between mb-2">
+      <header className="flex flex-col md:flex-row md:items-end justify-between gap-6 shrink-0">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-white mb-1 flex items-center gap-3">
-            <Target className="text-indigo-400" size={28} /> Target Directory
+          <h1 className="text-5xl font-black tracking-tighter text-white mb-3 flex items-center gap-5">
+            Intelligence Vault
+            <div className="px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-[10px] text-indigo-400 font-black uppercase tracking-[0.2em]">
+               {filteredAndSortedTargets.length} Entities Proxied
+            </div>
           </h1>
-          <p className="text-gray-400 text-sm">
-            Comprehensive list of monitored entities and transaction likelihood scores.
+          <p className="text-gray-400 text-lg font-medium max-w-2xl leading-relaxed">
+            Universal directory of analyzed entities. Calibrated by <span className="text-white">Aethelgard High-Fidelity Scoring</span>.
           </p>
         </div>
         
-        <div className="flex gap-3">
-          <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
-               <Search size={16} />
+        <div className="flex gap-4">
+          <div className="relative group">
+            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 group-focus-within:text-indigo-400 transition-colors">
+               <Search size={20} />
             </span>
             <input 
                type="text" 
-               placeholder="Search targets..." 
-               className="w-64 bg-[#ffffff05] border border-[#ffffff10] rounded-lg py-2 pl-10 pr-4 text-sm text-gray-300 placeholder-gray-500 outline-none focus:border-indigo-500/50 focus:bg-[#ffffff0a] transition-all"
+               value={search}
+               onChange={(e) => setSearch(e.target.value)}
+               placeholder="Intercept company, sector or thesis..." 
+               className="w-96 bg-white/[0.03] border border-white/10 rounded-[2rem] py-4 pl-14 pr-6 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-indigo-500/50 focus:bg-white/[0.05] transition-all backdrop-blur-md"
             />
           </div>
-          <button className="px-4 py-2 rounded-lg bg-[#ffffff0a] border border-[#ffffff10] text-sm font-medium text-white hover:bg-[#ffffff15] transition-all flex items-center gap-2">
-            <Filter size={16} /> Filters
+          <button 
+            onClick={() => setShowFilters(true)}
+            className={`px-6 py-4 rounded-[2rem] transition-all flex items-center gap-3 font-black text-[11px] uppercase tracking-widest
+              ${selectedSectors.length > 0 || minScore > 40 ? "bg-indigo-600 border border-indigo-500 text-white shadow-2xl shadow-indigo-600/30" : "bg-white/[0.03] border border-white/10 text-white hover:bg-white/10"}
+            `}
+          >
+            <SlidersHorizontal size={18} /> Scoping {(selectedSectors.length > 0) && `(${selectedSectors.length})`}
+          </button>
+          <button className="px-6 py-4 rounded-[2rem] bg-indigo-600/10 text-indigo-400 border border-indigo-500/20 hover:bg-indigo-600 hover:text-white transition-all flex items-center gap-3 font-black text-[11px] uppercase tracking-widest active:scale-95 shadow-2xl">
+            <Download size={18} /> Export Intelligence
           </button>
         </div>
       </header>
 
       {/* Table Area */}
-      <div className="flex-1 bg-[#050505] border border-[#ffffff10] rounded-2xl overflow-hidden flex flex-col shadow-[0_4px_30px_rgba(0,0,0,0.5)]">
+      <div className="flex-1 bg-black/40 border border-white/10 rounded-[3rem] overflow-hidden flex flex-col shadow-2xl backdrop-blur-3xl relative">
         
         {/* Table Header */}
-        <div className="grid grid-cols-12 gap-4 px-6 py-4 border-b border-[#ffffff10] bg-[#ffffff05] text-xs font-semibold text-gray-400 uppercase tracking-wider">
-          <div className="col-span-4 flex items-center gap-2 cursor-pointer hover:text-gray-200 transition-colors">
-            Company Name <ArrowUpDown size={14} />
+        <div className="grid grid-cols-12 gap-6 px-10 py-6 border-b border-white/10 bg-white/[0.02] text-[11px] font-black text-gray-500 uppercase tracking-[0.2em]">
+          <div 
+            className="col-span-4 flex items-center gap-3 cursor-pointer hover:text-white transition-colors"
+            onClick={() => handleSort("name")}
+          >
+            Entity Identity {sortKey === "name" && <ArrowUpDown size={14} className="text-indigo-400" />}
           </div>
-          <div className="col-span-2 flex items-center gap-2 cursor-pointer hover:text-gray-200 transition-colors">
-            Sector <ArrowUpDown size={14} />
+          <div 
+            className="col-span-2 flex items-center gap-3 cursor-pointer hover:text-white transition-colors"
+            onClick={() => handleSort("sector")}
+          >
+            Sub-Cluster {sortKey === "sector" && <ArrowUpDown size={14} className="text-indigo-400" />}
           </div>
-          <div className="col-span-3 flex items-center gap-2 cursor-pointer hover:text-gray-200 transition-colors">
-            Hypothesis <ArrowUpDown size={14} />
+          <div 
+            className="col-span-3 flex items-center gap-3 cursor-pointer hover:text-white transition-colors"
+            onClick={() => handleSort("dealType")}
+          >
+            Primary Thesis {sortKey === "dealType" && <ArrowUpDown size={14} className="text-indigo-400" />}
           </div>
-          <div className="col-span-2 flex items-center gap-2 cursor-pointer hover:text-gray-200 transition-colors justify-end">
-            Score <ArrowUpDown size={14} />
+          <div 
+            className="col-span-2 flex items-center gap-3 cursor-pointer hover:text-white transition-colors justify-end text-right"
+            onClick={() => handleSort("priorityScore")}
+          >
+            Confidence Metric {sortKey === "priorityScore" && <ArrowUpDown size={14} className="text-indigo-400" />}
           </div>
-          <div className="col-span-1 text-right">Action</div>
+          <div className="col-span-1 text-right">Data</div>
         </div>
 
         {/* Table Body */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto custom-scrollbar">
           {loading ? (
-            <div className="p-8 text-center text-gray-500 flex flex-col items-center justify-center h-full gap-4">
-              <div className="w-8 h-8 rounded-full border-t-2 border-indigo-500 animate-spin" />
-              Loading targets...
+            <div className="p-20 text-center text-gray-500 flex flex-col items-center justify-center h-full gap-8">
+              <div className="relative w-16 h-16">
+                <div className="absolute inset-0 border-4 border-indigo-500/10 rounded-full" />
+                <div className="absolute inset-0 border-t-4 border-indigo-500 rounded-full animate-spin shadow-[0_0_20px_rgba(79,70,229,0.5)]" />
+              </div>
+              <span className="font-black uppercase tracking-[0.3em] text-[10px] text-white/50">Accessing Aethelgard Datastream...</span>
             </div>
           ) : (
-            <div className="flex flex-col divide-y divide-[#ffffff0a]">
-              {targets.map((target, idx) => (
-                <motion.div 
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: idx * 0.05 }}
-                  key={target.id}
-                  onClick={() => router.push(`/targets/${target.id}`)}
-                  className="grid grid-cols-12 gap-4 px-6 py-4 items-center hover:bg-[#ffffff08] transition-colors cursor-pointer group"
-                >
-                  <div className="col-span-4 flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-[#ffffff0a] border border-[#ffffff10] flex items-center justify-center text-indigo-400">
-                       <Building size={18} />
+            <div className="flex flex-col divide-y divide-white/[0.03]">
+              <AnimatePresence mode="popLayout">
+                {filteredAndSortedTargets.map((target, idx) => (
+                  <motion.div 
+                    layout
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.3, delay: idx * 0.05 }}
+                    key={target.id}
+                    onClick={() => router.push(`/targets/${target.id}`)}
+                    className="grid grid-cols-12 gap-6 px-10 py-7 items-center hover:bg-white/[0.04] transition-all cursor-pointer group active:scale-[0.998] relative"
+                  >
+                    <div className="col-span-4 flex items-center gap-5">
+                      <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-gray-500 group-hover:text-indigo-400 group-hover:bg-indigo-500/10 group-hover:border-indigo-500/30 transition-all shadow-xl">
+                         <Building size={24} />
+                      </div>
+                      <div>
+                        <div className="font-black text-white text-lg group-hover:text-indigo-400 transition-colors tracking-tighter leading-none mb-2">{target.name}</div>
+                        <div className="text-[10px] font-black text-gray-700 uppercase tracking-[0.2em]">{target.id}</div>
+                      </div>
                     </div>
-                    <div>
-                      <div className="font-bold text-white text-sm group-hover:text-indigo-400 transition-colors">{target.name}</div>
-                      <div className="text-xs text-gray-500">{target.id}</div>
-                    </div>
-                  </div>
-                  <div className="col-span-2">
-                    <span className="px-2 py-1 rounded text-[10px] font-semibold tracking-wider uppercase bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                      {target.sector}
-                    </span>
-                  </div>
-                  <div className="col-span-3">
-                    <div className="text-sm text-gray-300 font-medium">{target.dealType}</div>
-                    <div className="text-xs text-gray-500">{target.timeframe}</div>
-                  </div>
-                  <div className="col-span-2 flex justify-end">
-                    <div className="flex items-end gap-1">
-                      <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-b from-white to-gray-400">
-                        {target.priorityScore}
+                    <div className="col-span-2">
+                      <span className="px-3 py-1.5 rounded-xl text-[10px] font-black tracking-widest uppercase bg-indigo-500/5 text-indigo-400/80 border border-indigo-500/10 group-hover:border-indigo-500/30 transition-all">
+                        {target.sector}
                       </span>
-                      <span className="text-[10px] text-gray-500 mb-1">/100</span>
                     </div>
-                  </div>
-                  <div className="col-span-1 flex justify-end">
-                    <button className="text-gray-400 hover:text-white p-2 rounded hover:bg-[#ffffff10] transition-colors">
-                      <ChevronRight size={18} />
-                    </button>
-                  </div>
-                </motion.div>
-              ))}
+                    <div className="col-span-3">
+                      <div className="text-base text-gray-200 font-bold tracking-tight mb-1">{target.dealType}</div>
+                      <div className="text-[10px] font-black text-gray-600 uppercase tracking-[0.2em]">{target.timeframe} Range</div>
+                    </div>
+                    <div className="col-span-2 flex justify-end">
+                      <div className="flex flex-col items-end">
+                        <span className="text-4xl font-black bg-clip-text text-transparent bg-gradient-to-b from-white to-gray-800 leading-none tracking-tighter">
+                          {target.priorityScore}
+                        </span>
+                        <div className="w-20 h-1.5 bg-white/5 rounded-full mt-3 overflow-hidden p-[1px]">
+                           <motion.div 
+                             initial={{ width: 0 }}
+                             animate={{ width: `${target.priorityScore}%` }}
+                             className="h-full bg-indigo-500 shadow-[0_0_10px_rgba(79,70,229,0.5)] rounded-full" 
+                           />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="col-span-1 flex justify-end">
+                      <div className="w-10 h-10 rounded-2xl bg-white/5 flex items-center justify-center text-gray-600 group-hover:text-white group-hover:bg-indigo-600 transition-all border border-white/5 group-hover:border-indigo-400 shadow-2xl active:scale-90">
+                        <ChevronRight size={22} />
+                      </div>
+                    </div>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
               
-              {/* Add dummy targets to fill out table */}
-              {[4, 5, 6, 7].map((num) => (
-                <div key={num} className="grid grid-cols-12 gap-4 px-6 py-4 items-center hover:bg-[#ffffff08] transition-colors cursor-pointer opacity-50">
-                  <div className="col-span-4 flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-[#ffffff0a] border border-[#ffffff10] flex items-center justify-center text-gray-500">
-                       <Building size={18} />
-                    </div>
-                    <div>
-                      <div className="font-bold text-gray-300 text-sm">Undisclosed Target {num}</div>
-                      <div className="text-xs text-gray-600">Pending classification</div>
-                    </div>
-                  </div>
-                  <div className="col-span-2">
-                    <span className="px-2 py-1 rounded text-[10px] font-semibold tracking-wider uppercase bg-[#ffffff10] text-gray-400 border border-[#ffffff20]">
-                      TBD
-                    </span>
-                  </div>
-                  <div className="col-span-3">
-                    <div className="text-xs text-gray-600">Data insufficient</div>
-                  </div>
-                  <div className="col-span-2 flex justify-end">
-                    <span className="text-sm font-medium text-gray-500">--</span>
-                  </div>
-                  <div className="col-span-1 flex justify-end">
-                    <ChevronRight size={18} className="text-gray-600" />
-                  </div>
+              {filteredAndSortedTargets.length === 0 && (
+                <div className="p-32 text-center flex flex-col items-center gap-8">
+                   <div className="w-24 h-24 rounded-[2rem] bg-white/5 border border-white/10 flex items-center justify-center">
+                       <Target size={48} className="text-gray-800" />
+                   </div>
+                   <div>
+                       <p className="font-black text-2xl text-white mb-3 tracking-tighter">Negative Intelligence Match</p>
+                       <p className="text-gray-500 font-medium max-w-sm mx-auto">No strategic entities match the current scoping parameters. Expand your Confidence threshold or Sector clusters.</p>
+                   </div>
                 </div>
-              ))}
+              )}
             </div>
           )}
         </div>
@@ -160,3 +319,6 @@ export default function TargetsPage() {
     </div>
   );
 }
+
+
+

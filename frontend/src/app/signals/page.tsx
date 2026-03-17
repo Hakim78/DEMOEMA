@@ -1,157 +1,244 @@
 "use client";
 
-import { motion } from "framer-motion";
-import { Activity, Bell, Filter, Search, ShieldAlert, ArrowUpRight, Clock, MapPin } from "lucide-react";
+import { useState, useMemo } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Activity, Bell, Filter, Search, ShieldAlert, ArrowUpRight, Clock, MapPin, Zap, TrendingUp, Globe, AlertCircle, Radio } from "lucide-react";
+
+// --- Types ---
+interface Signal {
+  id: string;
+  type: string;
+  title: string;
+  time: string;
+  source: string;
+  severity: "high" | "medium" | "low";
+  location: string;
+  tags: string[];
+}
 
 export default function SignalsPage() {
-  const signals = [
-    { type: "Critical Event", title: "CFO Replacement at TechFlow Industrials", time: "2 hours ago", source: "Press Release Analysis", severity: "high", location: "Global" },
-    { type: "Weak Signal", title: "Succession Pattern detected: Founder of Aetherial SA approaching 65", time: "Yesterday", source: "Proprietary Data", severity: "medium", location: "Europe" },
-    { type: "Market Movement", title: "New holding vehicle registered linked to NexSphere board", time: "2 days ago", source: "Corporate Registry", severity: "medium", location: "France" },
-    { type: "Rumor", title: "Spin-off discussions reported in Industrial Tech sector forums", time: "4 days ago", source: "NLP Web Scrape", severity: "low", location: "North America" },
-    { type: "Pattern Match", title: "Historical holding period (5+ years) reached for 14 portfolio companies of EQT", time: "1 week ago", source: "PE Database", severity: "high", location: "Global" },
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("All");
+
+  const signals: Signal[] = [
+    { id: "1", type: "Critical Event", title: "CFO Replacement at TechFlow Industrials", time: "2 hours ago", source: "Press Analysis", severity: "high", location: "Global", tags: ["Leadership", "Spin-off"] },
+    { id: "2", type: "Weak Signal", title: "Succession Pattern: Founder of Aetherial SA nearing threshold", time: "Yesterday", source: "Proprietary", severity: "high", location: "Europe", tags: ["Founder-led", "Exit"] },
+    { id: "3", type: "Market Movement", title: "New holding vehicle registered for NexSphere executives", time: "2 days ago", source: "Registry", severity: "medium", location: "France", tags: ["Restructuring", "M&A"] },
+    { id: "4", type: "Strategic Rumor", title: "Internal spin-off discussions in Industrial Tech sector", time: "4 days ago", source: "Web Scrape", severity: "low", location: "Global", tags: ["Rumor", "Sector-wide"] },
+    { id: "5", type: "Pattern Match", title: "Historical holding period (5Y+) reached for EQT Portfolio", time: "1 week ago", source: "PE Intelligence", severity: "high", location: "Global", tags: ["Exit Window", "Fund Life"] },
+    { id: "6", type: "Advisory Signal", title: "Boutique advisor headcount surge in UK Software space", time: "3 hours ago", source: "Network", severity: "medium", location: "UK", tags: ["Advisors", "Pipeline"] },
   ];
 
+  const filteredSignals = useMemo(() => {
+    return signals.filter(s => {
+      const matchSearch = s.title.toLowerCase().includes(search.toLowerCase()) || 
+                          s.type.toLowerCase().includes(search.toLowerCase());
+      const matchFilter = filter === "All" || s.severity === filter.toLowerCase();
+      return matchSearch && matchFilter;
+    });
+  }, [search, filter]);
+
   return (
-    <div className="flex flex-col gap-6 w-full max-w-7xl mx-auto h-[calc(100vh-2rem)]">
+    <div className="flex flex-col gap-8 w-full max-w-7xl mx-auto py-4 h-[calc(100vh-8rem)]">
       {/* Header */}
-      <header className="flex items-end justify-between mb-2">
+      <header className="flex flex-col md:flex-row md:items-end justify-between gap-4 shrink-0">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-white mb-1 flex items-center gap-3">
-            <Activity className="text-indigo-400" size={28} /> Market Signals Feed
+          <h1 className="text-4xl font-black tracking-tight text-white mb-2 flex items-center gap-4">
+            Intelligence Feed
+            <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-[10px] text-indigo-400 font-black uppercase tracking-[0.2em]">
+               <Radio size={12} className="animate-pulse" /> Live Stream
+            </div>
           </h1>
-          <p className="text-gray-400 text-sm">
-            AI-detected events, anomalies, and patterns indicating transaction probability.
+          <p className="text-gray-400 text-sm font-medium">
+            Real-time anomaly detection and strategic market triggers calibrated by Aethelgard.
           </p>
         </div>
         
         <div className="flex gap-3">
-          <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
-               <Search size={16} />
+          <div className="relative group">
+            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 group-focus-within:text-indigo-400 transition-colors">
+               <Search size={18} />
             </span>
             <input 
                type="text" 
-               placeholder="Search signals..." 
-               className="w-64 bg-[#ffffff05] border border-[#ffffff10] rounded-lg py-2 pl-10 pr-4 text-sm text-gray-300 placeholder-gray-500 outline-none focus:border-indigo-500/50 focus:bg-[#ffffff0a] transition-all"
+               value={search}
+               onChange={(e) => setSearch(e.target.value)}
+               placeholder="Search intercept data..." 
+               className="w-80 bg-white/[0.03] border border-white/10 rounded-2xl py-3 pl-12 pr-4 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-indigo-500/50 focus:bg-white/[0.05] transition-all"
             />
           </div>
-          <button className="px-4 py-2 rounded-lg bg-[#ffffff0a] border border-[#ffffff10] text-sm font-medium text-white hover:bg-[#ffffff15] transition-all flex items-center gap-2">
-            <Filter size={16} /> Filters
+          <button className="px-5 py-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[10px] font-black uppercase tracking-widest text-white hover:bg-white/10 transition-all flex items-center gap-2">
+            <AlertCircle size={16} /> Notification Matrix
           </button>
         </div>
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 flex-1 min-h-0">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 flex-1 min-h-0">
         
         {/* Main Feed */}
-        <div className="lg:col-span-3 bg-[#050505] border border-[#ffffff10] rounded-2xl overflow-hidden flex flex-col shadow-[0_4px_30px_rgba(0,0,0,0.5)]">
-          <div className="p-4 border-b border-[#ffffff10] flex gap-2">
-             <button className="px-3 py-1.5 rounded bg-indigo-500/10 text-indigo-400 text-xs font-semibold border border-indigo-500/20">All Signals</button>
-             <button className="px-3 py-1.5 rounded text-gray-400 hover:bg-[#ffffff0a] hover:text-white text-xs font-semibold transition-colors">High Probability</button>
-             <button className="px-3 py-1.5 rounded text-gray-400 hover:bg-[#ffffff0a] hover:text-white text-xs font-semibold transition-colors">Succession</button>
-             <button className="px-3 py-1.5 rounded text-gray-400 hover:bg-[#ffffff0a] hover:text-white text-xs font-semibold transition-colors">Carve-outs</button>
+        <div className="lg:col-span-8 bg-black/40 border border-white/10 rounded-[2.5rem] overflow-hidden flex flex-col shadow-2xl backdrop-blur-xl">
+          <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between bg-white/[0.02]">
+             <div className="flex gap-2">
+                {["All", "High", "Medium", "Low"].map((lvl) => (
+                  <button 
+                    key={lvl}
+                    onClick={() => setFilter(lvl)}
+                    className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border
+                      ${filter === lvl 
+                        ? "bg-indigo-500/10 border-indigo-500/30 text-indigo-400" 
+                        : "bg-white/5 border-transparent text-gray-500 hover:bg-white/10 hover:text-gray-300"
+                      }
+                    `}
+                  >
+                    {lvl} {lvl === "All" ? "Alerts" : "Severity"}
+                  </button>
+                ))}
+             </div>
+             <div className="text-[10px] font-black text-gray-600 uppercase tracking-widest">
+                Scanning 14.2M datapoints / sec
+             </div>
           </div>
           
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {signals.map((signal, idx) => (
-              <motion.div 
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: idx * 0.1 }}
-                key={idx} 
-                className="p-5 rounded-2xl bg-[#ffffff05] border border-[#ffffff10] hover:border-indigo-500/30 transition-all group flex gap-4"
-              >
-                <div className="flex-shrink-0 mt-1">
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center border
-                    ${signal.severity === 'high' ? 'bg-amber-500/10 border-amber-500/30 text-amber-500' : ''}
-                    ${signal.severity === 'medium' ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-400' : ''}
-                    ${signal.severity === 'low' ? 'bg-gray-500/10 border-gray-500/30 text-gray-400' : ''}
-                  `}>
-                    <Bell size={18} />
-                  </div>
-                </div>
-                
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-1">
-                    <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded
-                      ${signal.severity === 'high' ? 'bg-amber-500/20 text-amber-400' : 'bg-[#ffffff0a] text-gray-400'}
-                    `}>
-                      {signal.type}
-                    </span>
-                    <span className="text-xs text-gray-500 flex items-center gap-1"><Clock size={12} /> {signal.time}</span>
-                  </div>
-                  
-                  <h3 className="text-base font-semibold text-white mb-2 group-hover:text-indigo-400 transition-colors">
-                    {signal.title}
-                  </h3>
-                  
-                  <div className="flex items-center gap-4 text-xs font-medium text-gray-500">
-                    <div className="flex items-center gap-1.5">
-                      <ShieldAlert size={14} className="text-gray-400" /> Source: {signal.source}
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <MapPin size={14} className="text-gray-400" /> {signal.location}
-                    </div>
-                  </div>
-                </div>
+          <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
+            <AnimatePresence mode="popLayout">
+              {filteredSignals.map((signal) => (
+                <motion.div 
+                  layout
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.98 }}
+                  key={signal.id} 
+                  className="p-6 rounded-[2rem] bg-white/[0.02] border border-white/10 hover:border-indigo-500/30 transition-all group flex gap-6 items-start relative overflow-hidden active:scale-[0.99]"
+                >
+                  <div className={`absolute top-0 left-0 w-1 h-full
+                    ${signal.severity === 'high' ? 'bg-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.5)]' : ''}
+                    ${signal.severity === 'medium' ? 'bg-purple-500' : ''}
+                    ${signal.severity === 'low' ? 'bg-gray-700' : ''}
+                  `} />
 
-                <div className="flex items-center justify-center px-2">
-                  <button className="w-8 h-8 rounded-full bg-[#ffffff0a] group-hover:bg-indigo-600 text-gray-400 group-hover:text-white flex items-center justify-center transition-all shadow-lg border border-[#ffffff15] group-hover:border-indigo-500">
-                     <ArrowUpRight size={16} />
-                  </button>
-                </div>
-              </motion.div>
-            ))}
+                  <div className="flex-shrink-0">
+                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center border transition-all
+                      ${signal.severity === 'high' ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400 group-hover:bg-indigo-600 group-hover:text-white' : 'bg-white/5 border-white/5 text-gray-500'}
+                    `}>
+                      <Bell size={22} />
+                    </div>
+                  </div>
+                  
+                  <div className="flex-1">
+                    <div className="flex items-center gap-4 mb-3">
+                      <span className={`text-[9px] font-black uppercase tracking-[0.2em] px-2.5 py-1 rounded-lg
+                        ${signal.severity === 'high' ? 'bg-indigo-500 text-white' : 'bg-white/10 text-gray-400'}
+                      `}>
+                        {signal.type}
+                      </span>
+                      <span className="text-[10px] font-black text-gray-600 flex items-center gap-2 uppercase tracking-[0.2em]">
+                        <Clock size={12} /> {signal.time}
+                      </span>
+                    </div>
+                    
+                    <h3 className="text-xl font-black text-white mb-4 group-hover:text-indigo-400 transition-colors tracking-tight">
+                      {signal.title}
+                    </h3>
+                    
+                    <div className="flex flex-wrap items-center gap-6">
+                      <div className="flex items-center gap-2 text-[10px] font-black text-gray-500 uppercase tracking-widest bg-white/5 px-3 py-1.5 rounded-xl border border-white/5">
+                        <Globe size={14} className="opacity-50" /> {signal.location}
+                      </div>
+                      <div className="flex items-center gap-2 text-[10px] font-black text-gray-500 uppercase tracking-widest">
+                        <ShieldAlert size={14} className="opacity-50 text-indigo-500" /> {signal.source}
+                      </div>
+                      <div className="flex gap-2 ml-auto">
+                        {signal.tags.map(tag => (
+                          <span key={tag} className="text-[9px] font-black text-gray-500 bg-indigo-500/5 px-2 py-1 rounded-md border border-indigo-500/10 uppercase tracking-widest">
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center self-center">
+                    <button className="w-12 h-12 rounded-2xl bg-white/5 group-hover:bg-indigo-600 text-gray-600 group-hover:text-white flex items-center justify-center transition-all border border-white/10 group-hover:border-indigo-400 shadow-xl active:scale-90">
+                       <ArrowUpRight size={24} />
+                    </button>
+                  </div>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+
+            {filteredSignals.length === 0 && (
+              <div className="p-20 text-center flex flex-col items-center gap-6">
+                 <div className="w-20 h-20 bg-white/5 rounded-[2rem] flex items-center justify-center border border-white/10">
+                    <ShieldAlert size={40} className="text-gray-700" />
+                 </div>
+                 <div>
+                   <h2 className="text-white font-black text-2xl mb-2 tracking-tighter">Silence in the Wire</h2>
+                   <p className="text-gray-500 max-w-sm mx-auto font-medium">No signals matching your current filters have reached the threshold. Engine reliability: 99.8%.</p>
+                 </div>
+              </div>
+            )}
           </div>
         </div>
 
         {/* Sidebar Analytics */}
-        <div className="flex flex-col gap-6">
-          <div className="bg-[#050505] p-5 rounded-2xl border border-[#ffffff10] shadow-[0_4px_30px_rgba(0,0,0,0.5)]">
-            <h3 className="text-sm font-semibold text-white mb-4 uppercase tracking-wider">Signal Velocity</h3>
-            <div className="flex items-end gap-2 mb-2">
-              <span className="text-4xl font-black bg-clip-text text-transparent bg-gradient-to-b from-white to-gray-500">
-                142
-              </span>
-              <span className="text-sm text-gray-400 font-medium mb-1.5">signals/week</span>
-            </div>
-            <div className="text-xs text-emerald-400 font-medium bg-emerald-500/10 px-2 py-1 rounded inline-block">
-              +24% vs last week
-            </div>
+        <div className="lg:col-span-4 flex flex-col gap-8 overflow-y-auto custom-scrollbar">
+          <div className="p-8 rounded-[2.5rem] bg-black/40 border border-white/10 shadow-2xl backdrop-blur-xl">
+             <div className="flex items-center justify-between mb-8">
+                <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em] flex items-center gap-2">
+                  <TrendingUp size={16} className="text-indigo-400" /> Market Volatility
+                </h3>
+                <Zap size={16} className="text-indigo-500 animate-pulse" />
+             </div>
+             
+             <div className="space-y-6">
+                <div className="flex items-end gap-3">
+                  <span className="text-6xl font-black text-white leading-none tracking-tighter">
+                    84.2
+                  </span>
+                  <div className="flex flex-col">
+                    <span className="text-[10px] text-emerald-500 font-black uppercase mb-1">↑ 14%</span>
+                    <span className="text-[10px] text-gray-600 font-black uppercase tracking-widest">Signal Index</span>
+                  </div>
+                </div>
+                
+                <div className="p-4 rounded-3xl bg-indigo-500/5 border border-indigo-500/10">
+                   <p className="text-[11px] text-indigo-200/60 leading-relaxed font-bold italic">
+                     "Significant uptick in holding vehicle creation across DACH industrials. Probability of carve-out wave: 74%."
+                   </p>
+                </div>
+             </div>
           </div>
 
-          <div className="bg-[#050505] p-5 rounded-2xl border border-[#ffffff10] shadow-[0_4px_30px_rgba(0,0,0,0.5)] flex-1">
-            <h3 className="text-sm font-semibold text-white mb-4 uppercase tracking-wider">Top Sub-Sectors</h3>
-            <div className="space-y-4">
-               <div>
-                  <div className="flex justify-between text-xs text-gray-300 font-medium mb-1.5">
-                    <span>Industrial Tech</span>
-                    <span className="text-indigo-400">45 alerts</span>
-                  </div>
-                  <div className="w-full h-1.5 bg-[#ffffff0a] rounded-full overflow-hidden">
-                    <div className="h-full bg-indigo-500" style={{ width: '80%' }} />
-                  </div>
-               </div>
-               <div>
-                  <div className="flex justify-between text-xs text-gray-300 font-medium mb-1.5">
-                    <span>Healthcare Carveouts</span>
-                    <span className="text-indigo-400">28 alerts</span>
-                  </div>
-                  <div className="w-full h-1.5 bg-[#ffffff0a] rounded-full overflow-hidden">
-                    <div className="h-full bg-indigo-400" style={{ width: '50%' }} />
-                  </div>
-               </div>
-               <div>
-                  <div className="flex justify-between text-xs text-gray-300 font-medium mb-1.5">
-                    <span>Consumer Retail</span>
-                    <span className="text-gray-500">12 alerts</span>
-                  </div>
-                  <div className="w-full h-1.5 bg-[#ffffff0a] rounded-full overflow-hidden">
-                    <div className="h-full bg-gray-500" style={{ width: '25%' }} />
-                  </div>
-               </div>
+          <div className="p-8 rounded-[2.5rem] bg-black/40 border border-white/10 shadow-2xl backdrop-blur-xl flex-1 flex flex-col">
+            <h3 className="text-[10px] font-black text-gray-500 mb-8 uppercase tracking-[0.2em] flex items-center gap-2">
+               <Globe size={16} className="text-indigo-400" /> Sector Heat
+            </h3>
+            <div className="space-y-6 flex-1">
+               {[
+                 { name: "Industrial Tech", trend: "Severe", color: "bg-indigo-500", val: "95%" },
+                 { name: "MedTech Carveouts", trend: "High", color: "bg-purple-500", val: "72%" },
+                 { name: "SaaS Clusters", trend: "Medium", color: "bg-gray-600", val: "45%" },
+                 { name: "EU Logistics", trend: "Low", color: "bg-gray-800", val: "20%" },
+               ].map((zone) => (
+                 <div key={zone.name} className="group cursor-default">
+                    <div className="flex justify-between text-[11px] font-black text-gray-400 mb-3 group-hover:text-white transition-colors uppercase tracking-widest">
+                      <span>{zone.name}</span>
+                      <span className="text-indigo-400">{zone.trend}</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+                      <motion.div 
+                        initial={{ width: 0 }}
+                        animate={{ width: zone.val }}
+                        className={`h-full ${zone.color} shadow-[0_0_10px_rgba(0,0,0,0.5)]`} 
+                      />
+                    </div>
+                 </div>
+               ))}
             </div>
+            
+            <button className="mt-10 w-full py-4 rounded-3xl bg-indigo-600 text-white font-black text-[10px] uppercase tracking-widest hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-600/20 active:scale-95">
+               Download Intelligence Report
+            </button>
           </div>
         </div>
 
@@ -159,3 +246,4 @@ export default function SignalsPage() {
     </div>
   );
 }
+
