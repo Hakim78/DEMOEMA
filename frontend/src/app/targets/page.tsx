@@ -5,15 +5,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Target, Search, Filter, ArrowUpDown, ChevronRight, Building, Download, SlidersHorizontal, X, Check, Globe, Shield } from "lucide-react";
 import { useRouter } from "next/navigation";
 
-// --- Types ---
-interface TargetData {
-  id: string;
-  name: string;
-  sector: string;
-  priorityScore: number;
-  dealType: string;
-  timeframe: string;
-}
+import { Target as TargetData } from "@/types";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 type SortKey = "name" | "sector" | "dealType" | "priorityScore";
 
@@ -30,7 +24,7 @@ export default function TargetsPage() {
   const router = useRouter();
 
   useEffect(() => {
-    fetch("http://localhost:8000/api/targets")
+    fetch(`${API_URL}/api/targets`)
       .then(res => res.json())
       .then(data => {
         setTargets(data.data);

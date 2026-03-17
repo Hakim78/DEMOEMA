@@ -6,6 +6,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, Target, Award, Users, Clock, Zap, Building, Crosshair, TrendingUp, AlertCircle, FileText, Share2, MoreVertical, ShieldCheck, ArrowRight, Radio, Fingerprint } from "lucide-react";
 import { useParams } from "next/navigation";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 export default function TargetDetail() {
   const params = useParams();
   const id = params?.id as string;
@@ -18,7 +20,7 @@ export default function TargetDetail() {
     if (!id) return;
     
     setLoading(true);
-    fetch(`http://localhost:8000/api/targets/${id}`)
+    fetch(`${API_URL}/api/targets/${id}`)
       .then(res => {
         if (!res.ok) throw new Error();
         return res.json();

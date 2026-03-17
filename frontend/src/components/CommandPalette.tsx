@@ -1,17 +1,12 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { Search, Command, Target, Zap, Activity, Users, X, Building, ArrowRight } from "lucide-react";
+import { Search, Command, Target as TargetIcon, Zap, Activity, Users, X, Building, ArrowRight } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
+import { SearchResult, Target } from "@/types";
 
-interface SearchResult {
-  id: string;
-  name: string;
-  sector: string;
-  type: "page" | "target";
-  path: string;
-}
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export function CommandPalette() {
   const [isOpen, setIsOpen] = useState(false);
@@ -33,26 +28,29 @@ export function CommandPalette() {
     return () => document.removeEventListener("keydown", down);
   }, []);
 
-  // Fetch targets when searching
+  // Fetch targets when searching with debounce
   useEffect(() => {
-    if (search.length > 1) {
-      fetch("http://localhost:8000/api/targets")
-        .then(res => res.json())
-        .then(data => {
-          const results: SearchResult[] = data.data
-            .filter((t: any) => t.name.toLowerCase().includes(search.toLowerCase()))
-            .map((t: any) => ({
+    const timer = setTimeout(() => {
+      if (search.length > 1) {
+        fetch(`${API_URL}/api/targets?q=${encodeURIComponent(search)}`)
+          .then(res => res.json())
+          .then(data => {
+            const results: SearchResult[] = data.data.map((t: Target) => ({
               id: t.id,
               name: t.name,
               sector: t.sector,
               type: "target",
               path: `/targets/${t.id}`
             }));
-          setTargets(results);
-        });
-    } else {
-      setTargets([]);
-    }
+            setTargets(results);
+          })
+          .catch(err => console.error("Search failed:", err));
+      } else {
+        setTargets([]);
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
   }, [search]);
 
   const pages: SearchResult[] = [
@@ -121,7 +119,7 @@ export function CommandPalette() {
                         <div className="flex items-center gap-4">
                           <div className="w-10 h-10 rounded-xl bg-white/5 border border-white/5 flex items-center justify-center text-gray-500 group-hover:text-indigo-400 group-hover:bg-indigo-500/10 group-hover:border-indigo-500/20 transition-all">
                             {item.id === 'dashboard' && <Command size={18} />}
-                            {item.id === 'targets-dir' && <Target size={18} />}
+                            {item.id === 'targets-dir' && <TargetIcon size={18} />}
                             {item.id === 'pipeline' && <Zap size={18} />}
                             {item.id === 'signals' && <Activity size={18} />}
                             {item.id === 'graph' && <Users size={18} />}

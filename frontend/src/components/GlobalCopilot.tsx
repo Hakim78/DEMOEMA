@@ -4,12 +4,9 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Send, Sparkles, MessageSquare, Bot, User, Zap, ChevronRight, Minimize2, Maximize2, Terminal, Info } from "lucide-react";
 
-interface Message {
-  role: "user" | "assistant";
-  content: string;
-  id: string;
-  timestamp: Date;
-}
+import { Message } from "@/types";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export default function GlobalCopilot() {
   const [isOpen, setIsOpen] = useState(false);
@@ -20,7 +17,7 @@ export default function GlobalCopilot() {
       id: "1",
       role: "assistant",
       content: "Hello! I am your AI M&A Copilot. I have access to your relationship maps, market signals, and pipeline data. How can I assist your origination strategy today?",
-      timestamp: new Date(),
+      timestamp: new Date().toISOString(),
     }
   ]);
   const [isLoading, setIsLoading] = useState(false);
@@ -46,7 +43,7 @@ export default function GlobalCopilot() {
       id: Date.now().toString(),
       role: "user",
       content: input,
-      timestamp: new Date(),
+      timestamp: new Date().toISOString(),
     };
 
     setMessages(prev => [...prev, userMsg]);
@@ -54,14 +51,14 @@ export default function GlobalCopilot() {
     setIsLoading(true);
 
     try {
-      const response = await fetch(`http://localhost:8000/api/copilot/query?q=${encodeURIComponent(input)}`);
+      const response = await fetch(`${API_URL}/api/copilot/query?q=${encodeURIComponent(input)}`);
       const data = await response.json();
       
       const assistantMsg: Message = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
         content: data.response || "I encountered an error processing that request.",
-        timestamp: new Date(),
+        timestamp: new Date().toISOString(),
       };
       
       setMessages(prev => [...prev, assistantMsg]);
@@ -70,7 +67,7 @@ export default function GlobalCopilot() {
         id: (Date.now() + 1).toString(),
         role: "assistant",
         content: "I'm having trouble connecting to the intelligence engine. Please ensure the backend is running.",
-        timestamp: new Date(),
+        timestamp: new Date().toISOString(),
       }]);
     } finally {
       setIsLoading(false);
@@ -161,7 +158,7 @@ export default function GlobalCopilot() {
                       `}>
                         {m.content}
                         <div className={`text-[9px] mt-2 opacity-40 font-bold uppercase tracking-widest ${m.role === "user" ? "text-right" : ""}`}>
-                          {m.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </div>
                       </div>
                     </motion.div>

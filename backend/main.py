@@ -86,8 +86,23 @@ MOCK_TARGETS = [
 ]
 
 @app.get("/api/targets")
-def get_targets():
-    return {"data": MOCK_TARGETS}
+def get_targets(
+    q: str = Query(None, description="Search query for target name or sector"),
+    sector: str = Query(None, description="Filter by sector")
+):
+    results = MOCK_TARGETS
+    
+    if q:
+        q_lower = q.lower()
+        results = [
+            t for t in results 
+            if q_lower in t["name"].lower() or q_lower in t["sector"].lower()
+        ]
+    
+    if sector:
+        results = [t for t in results if t["sector"].lower() == sector.lower()]
+        
+    return {"data": results}
 
 @app.get("/api/targets/{target_id}")
 def get_target(target_id: str):

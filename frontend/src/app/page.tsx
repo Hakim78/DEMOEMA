@@ -2,30 +2,13 @@
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { TrendingUp, Users, Building, AlertTriangle, ArrowRight, Zap, ChevronRight, MessageSquare, Target, Activity, ShieldCheck, Cpu, Radio, Sparkles } from "lucide-react";
+import { TrendingUp, Users, Building, AlertTriangle, ArrowRight, Zap, ChevronRight, MessageSquare, Target as TargetIcon, Activity, ShieldCheck, Cpu, Radio, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { SkeletonCard, SkeletonKPI } from "@/components/LoadingSkeleton";
 
-// --- Types ---
-interface TargetScore {
-  transmission: number;
-  transaction: number;
-  preparation: number;
-  relationship: number;
-  timing: number;
-}
+import { Target } from "@/types";
 
-interface Target {
-  id: string;
-  name: string;
-  sector: string;
-  priorityScore: number;
-  signals: string[];
-  dealType: string;
-  timeframe: string;
-  accessibility: string;
-  scores: TargetScore;
-}
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export default function Home() {
   const [targets, setTargets] = useState<Target[]>([]);
@@ -35,7 +18,7 @@ export default function Home() {
 
   // Fetch targets from FastAPI backend
   useEffect(() => {
-    fetch("http://localhost:8000/api/targets")
+    fetch(`${API_URL}/api/targets`)
       .then(res => {
         if (!res.ok) throw new Error(`HTTP error: ${res.status}`);
         return res.json();
