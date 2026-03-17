@@ -32,26 +32,43 @@ export default function ReportPage() {
     );
   }
 
+  const [isExporting, setIsExporting] = useState(false);
+
   const handlePrint = () => {
-    window.print();
+    setIsExporting(true);
+    setTimeout(() => {
+      window.print();
+      setIsExporting(false);
+    }, 500);
   };
 
   return (
     <div className="min-h-screen bg-[#050505] text-white p-4 md:p-8 pb-32 flex flex-col items-center">
       {/* Controls - Hidden in Print */}
-      <div className="w-full max-w-4xl flex justify-between items-center mb-12 print:hidden">
+      <div className="w-full max-w-4xl flex flex-col sm:flex-row justify-between items-center mb-12 print:hidden gap-6">
         <button 
           onClick={() => router.back()}
           className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors font-black uppercase tracking-widest text-[10px]"
         >
           <ArrowLeft size={16} /> Back to Vault
         </button>
-        <button 
-          onClick={handlePrint}
-          className="px-6 py-3 bg-white text-black rounded-2xl font-black uppercase tracking-widest text-[10px] flex items-center gap-3 hover:bg-gray-200 transition-all active:scale-95 shadow-2xl"
-        >
-          <Download size={16} /> Export Dossier (PDF)
-        </button>
+        <div className="flex items-center gap-4">
+          <div className="hidden md:flex items-center gap-2 text-[8px] font-black text-indigo-500 uppercase tracking-widest">
+            <ShieldCheck size={12} /> Secure Protocol Active
+          </div>
+          <button 
+            onClick={handlePrint}
+            disabled={isExporting}
+            className={`px-8 py-4 bg-white text-black rounded-2xl font-black uppercase tracking-widest text-[10px] flex items-center gap-3 hover:bg-gray-200 transition-all active:scale-95 shadow-2xl ${isExporting ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            {isExporting ? (
+              <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" />
+            ) : (
+              <Download size={16} />
+            )}
+            {isExporting ? "Processing PDF..." : "Export Dossier (PDF)"}
+          </button>
+        </div>
       </div>
 
       {/* The Report Document */}
@@ -194,9 +211,34 @@ export default function ReportPage() {
 
       <style jsx global>{`
         @media print {
-          body { background: white !important; }
-          .min-h-screen { background: white !important; }
-          header, footer, nav, aside { display: none !important; }
+          html, body { 
+            background: white !important; 
+            color: black !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+          .min-h-screen { 
+            background: white !important; 
+            padding: 0 !important;
+          }
+          .shadow-[0_0_100px_rgba(255,255,255,0.05)] {
+            shadow: none !important;
+            box-shadow: none !important;
+          }
+          .rounded-[2rem], .rounded-[3rem] {
+            border-radius: 0 !important;
+          }
+          header, footer, nav, aside, .print\:hidden { 
+            display: none !important; 
+          }
+          .max-w-4xl {
+            max-width: 100% !important;
+            width: 100% !important;
+          }
+          * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
         }
       `}</style>
     </div>
