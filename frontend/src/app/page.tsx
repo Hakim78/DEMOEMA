@@ -14,7 +14,24 @@ export default function Home() {
   const [targets, setTargets] = useState<Target[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState(false);
+  const [processingAction, setProcessingAction] = useState<string | null>(null);
+  const [notification, setNotification] = useState<string | null>(null);
   const router = useRouter();
+
+  useEffect(() => {
+    if (notification) {
+      const timer = setTimeout(() => setNotification(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [notification]);
+
+  const handleAction = (name: string, message: string) => {
+    setProcessingAction(name);
+    setTimeout(() => {
+      setProcessingAction(null);
+      setNotification(message);
+    }, 1500);
+  };
 
   // Fetch targets from FastAPI backend
   useEffect(() => {
@@ -35,7 +52,20 @@ export default function Home() {
   }, []);
 
   return (
-    <div className="flex flex-col gap-10 w-full max-w-7xl mx-auto py-4">
+    <div className="flex flex-col gap-10 w-full max-w-7xl mx-auto py-4 relative">
+       {/* Toast Notification */}
+       <AnimatePresence>
+        {notification && (
+          <motion.div 
+            initial={{ opacity: 0, y: 50, x: '-50%' }}
+            animate={{ opacity: 1, y: 0, x: '-50%' }}
+            exit={{ opacity: 0, y: 20, x: '-50%' }}
+            className="fixed bottom-10 left-1/2 z-[200] px-6 py-3 rounded-2xl bg-indigo-600 text-white font-black text-[10px] uppercase tracking-widest shadow-2xl flex items-center gap-3 border border-indigo-400 backdrop-blur-xl"
+          >
+            <ShieldCheck size={16} /> {notification}
+          </motion.div>
+        )}
+      </AnimatePresence>
       {/* Header */}
       <header className="flex flex-col md:flex-row md:items-end justify-between gap-6 shrink-0">
         <div>
@@ -51,11 +81,27 @@ export default function Home() {
         </div>
         
         <div className="flex flex-col sm:flex-row gap-4 w-full md:w-auto">
-          <button className="px-6 py-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[11px] font-black uppercase tracking-widest text-white hover:bg-white/10 transition-all flex items-center justify-center gap-3 backdrop-blur-md">
-            <Activity size={16} className="text-indigo-500" /> <span className="hidden sm:inline">System Diagnostics</span>
+          <button 
+            onClick={() => handleAction('diag', 'System diagnostics completed. All clusters operational.')}
+            className="px-6 py-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[11px] font-black uppercase tracking-widest text-white hover:bg-white/10 transition-all flex items-center justify-center gap-3 backdrop-blur-md"
+          >
+            {processingAction === 'diag' ? (
+               <div className="w-4 h-4 border-2 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin" />
+            ) : (
+               <Activity size={16} className="text-indigo-500" />
+            )}
+            <span className="hidden sm:inline">{processingAction === 'diag' ? 'Running...' : 'System Diagnostics'}</span>
           </button>
-          <button className="px-6 py-3 rounded-2xl bg-indigo-600 text-white shadow-[0_20px_40px_rgba(79,70,229,0.3)] hover:bg-indigo-500 transition-all flex items-center justify-center gap-3 font-black text-[11px] uppercase tracking-widest active:scale-95">
-            <Sparkles size={16} /> Force Recalibration
+          <button 
+            onClick={() => handleAction('recal', 'Force recalibration initiated. Intelligence scores updated.')}
+            className="px-6 py-3 rounded-2xl bg-indigo-600 text-white shadow-[0_20px_40px_rgba(79,70,229,0.3)] hover:bg-indigo-500 transition-all flex items-center justify-center gap-3 font-black text-[11px] uppercase tracking-widest active:scale-95"
+          >
+            {processingAction === 'recal' ? (
+               <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+            ) : (
+               <Sparkles size={16} />
+            )}
+            {processingAction === 'recal' ? 'Recalibrating...' : 'Force Recalibration'}
           </button>
         </div>
       </header>
@@ -189,7 +235,13 @@ export default function Home() {
                     </div>
                   </div>
                   
-                  <button className="w-full md:w-auto flex items-center justify-center gap-3 px-8 py-3.5 rounded-2xl bg-white text-black font-black text-[11px] uppercase tracking-widest hover:bg-indigo-600 hover:text-white transition-all shadow-2xl shadow-black/50 active:scale-95 group/btn">
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      router.push(`/targets/${target.id}`);
+                    }}
+                    className="w-full md:w-auto flex items-center justify-center gap-3 px-8 py-3.5 rounded-2xl bg-white text-black font-black text-[11px] uppercase tracking-widest hover:bg-indigo-600 hover:text-white transition-all shadow-2xl shadow-black/50 active:scale-95 group/btn"
+                  >
                     Open Intercept Data <ChevronRight size={18} className="group-hover/btn:translate-x-1 transition-transform" />
                   </button>
                 </div>

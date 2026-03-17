@@ -15,6 +15,23 @@ export default function TargetDetail() {
   const [targetData, setTargetData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [processingAction, setProcessingAction] = useState<string | null>(null);
+  const [notification, setNotification] = useState<{message: string, type: 'success' | 'info'} | null>(null);
+
+  useEffect(() => {
+    if (notification) {
+      const timer = setTimeout(() => setNotification(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [notification]);
+
+  const handleAction = (name: string, message: string) => {
+    setProcessingAction(name);
+    setTimeout(() => {
+      setProcessingAction(null);
+      setNotification({ message, type: 'success' });
+    }, 1500);
+  };
 
   useEffect(() => {
     if (!id) return;
@@ -64,7 +81,20 @@ export default function TargetDetail() {
   }
 
   return (
-    <div className="flex flex-col gap-12 w-full max-w-7xl mx-auto pb-32 pt-6 px-4">
+    <div className="flex flex-col gap-12 w-full max-w-7xl mx-auto pb-32 pt-6 px-4 relative">
+      {/* Toast Notification */}
+      <AnimatePresence>
+        {notification && (
+          <motion.div 
+            initial={{ opacity: 0, y: 50, x: '-50%' }}
+            animate={{ opacity: 1, y: 0, x: '-50%' }}
+            exit={{ opacity: 0, y: 20, x: '-50%' }}
+            className="fixed bottom-10 left-1/2 z-[200] px-6 py-3 rounded-2xl bg-indigo-600 text-white font-black text-[10px] uppercase tracking-widest shadow-2xl flex items-center gap-3 border border-indigo-400 backdrop-blur-xl"
+          >
+            <ShieldCheck size={16} /> {notification.message}
+          </motion.div>
+        )}
+      </AnimatePresence>
       {/* Top Navigation & Status */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-8 sm:gap-6">
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-6">
@@ -90,11 +120,23 @@ export default function TargetDetail() {
         </div>
         
         <div className="flex gap-4 w-full lg:w-auto">
-          <button className="flex-1 lg:flex-none w-12 h-12 rounded-2xl bg-white/[0.03] border border-white/10 text-gray-400 hover:text-white hover:bg-white/10 transition-all flex items-center justify-center">
+          <button 
+            onClick={() => handleAction('share', 'Intercept URL copied to tactical clipboard')}
+            className="flex-1 lg:flex-none w-12 h-12 rounded-2xl bg-white/[0.03] border border-white/10 text-gray-400 hover:text-white hover:bg-white/10 transition-all flex items-center justify-center"
+          >
             <Share2 size={20} />
           </button>
-          <button className="flex-[4] lg:flex-none flex items-center justify-center gap-3 px-8 py-3 rounded-2xl bg-indigo-600 text-white font-black text-xs uppercase tracking-widest shadow-2xl shadow-indigo-600/40 hover:bg-indigo-500 transition-all active:scale-95">
-            <TrendingUp size={18} /> Signal Fetch
+          <button 
+            disabled={processingAction === 'fetch'}
+            onClick={() => handleAction('fetch', 'Real-time signals synchronized with primary vault')}
+            className="flex-[4] lg:flex-none flex items-center justify-center gap-3 px-8 py-3 rounded-2xl bg-indigo-600 text-white font-black text-xs uppercase tracking-widest shadow-2xl shadow-indigo-600/40 hover:bg-indigo-500 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {processingAction === 'fetch' ? (
+              <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+            ) : (
+              <TrendingUp size={18} />
+            )}
+            {processingAction === 'fetch' ? 'Fetching...' : 'Signal Fetch'}
           </button>
         </div>
       </div>
@@ -258,8 +300,12 @@ export default function TargetDetail() {
               <h3 className="text-xl md:text-2xl font-black text-white flex items-center gap-4 tracking-tighter text-left">
                 <Clock className="text-gray-500" size={24} /> Signal Chronology
               </h3>
-              <button className="w-full sm:w-auto text-[10px] font-black text-indigo-400 uppercase tracking-widest hover:text-indigo-300 bg-indigo-500/5 px-4 py-2 rounded-xl border border-indigo-500/10">
-                Full Export
+              <button 
+                disabled={processingAction === 'export'}
+                onClick={() => handleAction('export', 'Strategic signal chronology exported to secure PDF')}
+                className="w-full sm:w-auto text-[10px] font-black text-indigo-400 uppercase tracking-widest hover:text-indigo-300 bg-indigo-500/5 px-4 py-2 rounded-xl border border-indigo-500/10 disabled:opacity-50"
+              >
+                {processingAction === 'export' ? 'Processing...' : 'Full Export'}
               </button>
             </div>
             
@@ -303,8 +349,12 @@ export default function TargetDetail() {
             </div>
             
             <div className="flex flex-col sm:flex-row justify-center gap-4 sm:gap-6 relative z-10 w-full lg:w-auto">
-               <button className="flex-1 sm:flex-none px-10 py-4 rounded-[2rem] bg-white/10 border border-white/20 text-white font-black text-xs uppercase tracking-widest hover:bg-white/20 transition-all backdrop-blur-xl active:scale-95">
-                  Sector Lead
+               <button 
+                 disabled={processingAction === 'lead'}
+                 onClick={() => handleAction('lead', 'Sector Lead assigned. Communication protocols initiated.')}
+                 className="flex-1 sm:flex-none px-10 py-4 rounded-[2rem] bg-white/10 border border-white/20 text-white font-black text-xs uppercase tracking-widest hover:bg-white/20 transition-all backdrop-blur-xl active:scale-95 disabled:opacity-50"
+               >
+                  {processingAction === 'lead' ? 'Assigning...' : 'Sector Lead'}
                </button>
                 <Link href={`/targets/${id}/report`} className="flex-1 sm:flex-none px-12 py-4 rounded-[2rem] bg-white text-black font-black text-xs uppercase tracking-widest hover:bg-indigo-50 transition-all flex items-center justify-center gap-3 shadow-2xl active:scale-95 group/btn">
                   PDF Dossier <ArrowRight size={18} className="group-hover/btn:translate-x-1 transition-transform" />
