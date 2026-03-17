@@ -1,156 +1,164 @@
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from typing import List, Dict, Any, Optional
 import time
+import random
 
-app = FastAPI(title="Origination Platform API", version="0.1.0")
+app = FastAPI(title="EDRCF 5.0 | M&A Signal Radar", version="5.0.0")
 
-# Restrict CORS to known dev origins and production
+# Restrict CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
         "http://localhost:3001",
         "https://*.vercel.app",
-        "https://demoema.vercel.app", # Potential production URL
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-MOCK_TARGETS = [
+# --- Business Logic & Scoring Constants ---
+
+SIGNAL_WEIGHTS = {
+    "holding_creation": 5,
+    "sci_creation": 3,
+    "shares_contribution": 5,
+    "capital_modification": 3,
+    "cfo_recruitment": 4,
+    "ceo_non_founder": 4,
+    "m_and_a_director": 5,
+    "founder_retirement": 5,
+    "refinancing": 3,
+    "debt_surge": 4,
+    "profitability_drop": 3,
+    "abnormal_growth": 4,
+    "filialisation": 4,
+    "carve_out": 5,
+    "asset_separation": 4,
+    "acquisition_disposal": 4,
+    "strategic_refocus": 3,
+    "sector_consolidation": 5,
+    "founder_age_58_plus": 5,
+    "no_succession": 4,
+}
+
+# --- Mock Data ---
+
+MOCK_TARGETS: List[Dict[str, Any]] = [
     {
-        "id": "co-1",
+        "id": "edrcf-1",
         "name": "TechFlow Industrials",
         "sector": "Industrial Tech",
-        "priorityScore": 89,
-        "signals": ["CFO Replacement", "Spin-off Rumors", "Historical Hold ~5Y"],
-        "dealType": "Carve-out / Buyout",
-        "timeframe": "3-6 Months",
-        "accessibility": "High (Warm Intro via John Doe)",
-        "scores": { "transmission": 85, "transaction": 92, "preparation": 88, "relationship": 90, "timing": 89 },
+        "globalScore": 42.5,
+        "priorityLevel": "Opportunité Forte",
+        "topSignals": [
+            {"id": "cfo_recruitment", "label": "Recrutement DAF (ex-PE)", "family": "Management"},
+            {"id": "holding_creation", "label": "Création Holding de contrôle", "family": "Patrimonial"},
+            {"id": "founder_age_58_plus", "label": "Fondateur > 60 ans", "family": "Dirigeant"},
+            {"id": "carve_out", "label": "Filialisation branche non-core", "family": "Structure"}
+        ],
+        "analysis": {
+            "type": "Transmission / LBO",
+            "window": "6-12 mois",
+            "narrative": "Le faisceau de signaux suggère une mise en ordre patrimoniale préalable à une transmission ou une ouverture minoritaire sous 6 à 12 mois. Le recrutement récent d'un DAF issu du Private Equity confirme la professionnalisation en vue d'un processus."
+        },
+        "activation": {
+            "deciders": ["Jean-Marc Vallet (Fondateur)", "Sophie Durand (DAF)"],
+            "approach": "Approche directe via réseau alumni (X-Mines)",
+            "reason": "Discussion sur la pérennisation industrielle et la structuration du capital post-carveout."
+        },
+        "risks": {
+            "falsePositive": "Léger (0.12)",
+            "uncertainties": "Capacité réelle du fondateur à déléguer le processus opérationnel."
+        },
+        "scores": {
+            "patrimonial": 85,
+            "management": 92,
+            "financial": 45,
+            "structure": 88,
+            "strategic": 70
+        }
     },
     {
-        "id": "co-2",
-        "name": "Aetherial SA",
-        "sector": "Renewable Energy",
-        "priorityScore": 76,
-        "signals": ["Succession Signal (Founder > 65)", "Secondary Buyout"],
-        "dealType": "Sponsor-to-Sponsor",
-        "timeframe": "9-12 Months",
-        "accessibility": "Medium (Cold via LinkedIn)",
-        "scores": { "transmission": 70, "transaction": 82, "preparation": 74, "relationship": 60, "timing": 95 },
-    },
-    {
-        "id": "co-3",
-        "name": "NexSphere Healthcare",
+        "id": "edrcf-2",
+        "name": "BioGrid Pharma",
         "sector": "MedTech",
-        "priorityScore": 68,
-        "signals": ["Holding Vehicle Creation", "Private Equity Backed"],
-        "dealType": "Build-up / Platform",
-        "timeframe": "12-18 Months",
-        "accessibility": "Low",
-        "scores": { "transmission": 65, "transaction": 70, "preparation": 75, "relationship": 45, "timing": 85 },
+        "globalScore": 31.2,
+        "priorityLevel": "Cible Prioritaire",
+        "topSignals": [
+            {"id": "strategic_refocus", "label": "Recentrage stratégique annoncé", "family": "Stratégie"},
+            {"id": "debt_surge", "label": "Hausse de l'endettement financier", "family": "Financier"},
+            {"id": "ceo_non_founder", "label": "DG non fondateur en place", "family": "Management"}
+        ],
+        "analysis": {
+            "type": "Ouverture de Capital",
+            "window": "12-18 mois",
+            "narrative": "La montée de l'endettement couplée à un recentrage sur les actifs core indique un besoin probable de fonds propres pour financer la prochaine phase de croissance ou un désengagement partiel des actionnaires historiques."
+        },
+        "activation": {
+            "deciders": ["Marc Lepic (DG)", "Conseil d'Administration"],
+            "approach": "Angle sectoriel / Consolidation",
+            "reason": "Support au plan stratégique 2027 et optimisation de la structure de bilan."
+        },
+        "risks": {
+            "falsePositive": "Moyen (0.21)",
+            "uncertainties": "Calendrier de refinancement de la dette senior."
+        },
+        "scores": {
+            "patrimonial": 40,
+            "management": 75,
+            "financial": 88,
+            "structure": 30,
+            "strategic": 82
+        }
     },
     {
-        "id": "co-4",
-        "name": "Blue Harbor Log",
+        "id": "edrcf-3",
+        "name": "Lumix Logistics",
         "sector": "Logistics",
-        "priorityScore": 94,
-        "signals": ["Asset Disposal", "Owner Debt Issues"],
-        "dealType": "Distressed / special",
-        "timeframe": "0-3 Months",
-        "accessibility": "High",
-        "scores": { "transmission": 90, "transaction": 98, "preparation": 85, "relationship": 70, "timing": 98 },
-    },
-    {
-        "id": "co-5",
-        "name": "Horizon Solar",
-        "sector": "Renewable Energy",
-        "priorityScore": 82,
-        "signals": ["Series C extension", "New Market Entry"],
-        "dealType": "Growth Equity",
-        "timeframe": "6-12 Months",
-        "accessibility": "Medium",
-        "scores": { "transmission": 60, "transaction": 75, "preparation": 90, "relationship": 80, "timing": 70 },
-    },
-    {
-        "id": "co-6",
-        "name": "CyberGrid Solutions",
-        "sector": "SaaS",
-        "priorityScore": 71,
-        "signals": ["Board Member Departure", "Audit Change"],
-        "dealType": "Take-Private",
-        "timeframe": "12-24 Months",
-        "accessibility": "Low",
-        "scores": { "transmission": 50, "transaction": 60, "preparation": 80, "relationship": 40, "timing": 85 },
+        "globalScore": 24.8,
+        "priorityLevel": "Cible à Préparer",
+        "topSignals": [
+            {"id": "sci_creation", "label": "Création SCI immobilière", "family": "Patrimonial"},
+            {"id": "sector_consolidation", "label": "Consolidation forte du secteur", "family": "Secteur"}
+        ],
+        "analysis": {
+            "type": "Cession / Consolidation",
+            "window": "18+ mois",
+            "narrative": "L'isolation des actifs immobiliers via une SCI est un signal classique de préparation de cession d'exploitation. Dans un secteur en pleine consolidation, Lumix devient une proie naturelle pour un roll-up."
+        },
+        "activation": {
+            "deciders": ["Famille Luminaire"],
+            "approach": "Veille stratégique / Partenariat",
+            "reason": "Discussion sur la valeur des actifs immobiliers vs opérationnels dans le marché actuel."
+        },
+        "risks": {
+            "falsePositive": "Fort (0.35)",
+            "uncertainties": "Attachement émotionnel à l'entreprise familiale."
+        },
+        "scores": {
+            "patrimonial": 90,
+            "management": 30,
+            "financial": 50,
+            "structure": 60,
+            "strategic": 75
+        }
     }
-]
-
-MOCK_SIGNALS = [
-    { "id": "1", "type": "Critical Event", "title": "CFO Replacement at TechFlow Industrials", "time": "2 hours ago", "source": "Press Analysis", "severity": "high", "location": "Global", "tags": ["Leadership", "Spin-off"] },
-    { "id": "2", "type": "Weak Signal", "title": "Succession Pattern: Founder of Aetherial SA nearing threshold", "time": "Yesterday", "source": "Proprietary", "severity": "high", "location": "Europe", "tags": ["Founder-led", "Exit"] },
-    { "id": "3", "type": "Market Movement", "title": "New holding vehicle registered for NexSphere executives", "time": "2 days ago", "source": "Registry", "severity": "medium", "location": "France", "tags": ["Restructuring", "M&A"] },
-    { "id": "4", "type": "Strategic Rumor", "title": "Internal spin-off discussions in Industrial Tech sector", "time": "4 days ago", "source": "Web Scrape", "severity": "low", "location": "Global", "tags": ["Rumor", "Sector-wide"] },
-    { "id": "5", "type": "Pattern Match", "title": "Historical holding period (5Y+) reached for EQT Portfolio", "time": "1 week ago", "source": "PE Intelligence", "severity": "high", "location": "Global", "tags": ["Exit Window", "Fund Life"] },
-    { "id": "6", "type": "Advisory Signal", "title": "Boutique advisor headcount surge in UK Software space", "time": "3 hours ago", "source": "Network", "severity": "medium", "location": "UK", "tags": ["Advisors", "Pipeline"] },
-]
-
-MOCK_PIPELINE = [
-    {
-        "id": "identification",
-        "title": "Identification",
-        "cards": [
-            { "id": "c1", "name": "Horizon Solar", "sector": "Renewable Energy", "score": 82, "tags": ["Scale-up", "US"], "priority": "medium" },
-            { "id": "c2", "name": "CyberGrid", "sector": "SaaS", "score": 71, "tags": ["Profitability focus"], "priority": "low" },
-        ],
-    },
-    {
-        "id": "qualification",
-        "title": "Qualification",
-        "cards": [
-            { "id": "c3", "name": "TechFlow Industrials", "sector": "Industrial Tech", "score": 89, "tags": ["Warm Intro", "3-6m Window"], "priority": "high" },
-            { "id": "c4", "name": "Aetherial SA", "sector": "Renewable Energy", "score": 76, "tags": ["Succession"], "priority": "high" },
-        ],
-    },
-    {
-        "id": "pathing",
-        "title": "Relationship Pathing",
-        "cards": [
-            { "id": "c5", "name": "NexSphere Healthcare", "sector": "MedTech", "score": 68, "tags": ["Carve-out"], "priority": "medium" },
-        ],
-    },
-    {
-        "id": "outreach",
-        "title": "Active Outreach",
-        "cards": [
-            { "id": "c6", "name": "Blue Harbor Log", "sector": "Logistics", "score": 94, "tags": ["Proprietary"], "priority": "high" },
-        ],
-    },
-    {
-        "id": "closing",
-        "title": "Closing",
-        "cards": [],
-    },
 ]
 
 @app.get("/api/targets")
 def get_targets(
-    q: str = Query(None, description="Search query for target name or sector"),
-    sector: str = Query(None, description="Filter by sector")
+    q: Optional[str] = Query(None),
+    sector: Optional[str] = Query(None)
 ):
     results = MOCK_TARGETS
-    
     if q:
         q_lower = q.lower()
-        results = [
-            t for t in results 
-            if q_lower in t["name"].lower() or q_lower in t["sector"].lower()
-        ]
-    
+        results = [t for t in results if q_lower in str(t["name"]).lower() or q_lower in str(t["sector"]).lower()]
     if sector:
-        results = [t for t in results if t["sector"].lower() == sector.lower()]
-        
+        results = [t for t in results if str(t["sector"]).lower() == sector.lower()]
     return {"data": results}
 
 @app.get("/api/targets/{target_id}")
@@ -158,36 +166,61 @@ def get_target(target_id: str):
     target = next((t for t in MOCK_TARGETS if t["id"] == target_id), None)
     if target:
         return {"data": target}
-    raise HTTPException(status_code=404, detail=f"Target '{target_id}' not found")
+    raise HTTPException(status_code=404, detail="Target not found")
 
 @app.get("/api/signals")
 def get_signals():
-    return {"data": MOCK_SIGNALS}
+    signals_feed = []
+    for t in MOCK_TARGETS:
+        for s in t["topSignals"]:
+            signals_feed.append({
+                "id": f"{t['id']}-{s['id']}",
+                "type": s["family"],
+                "title": f"{s['label']} détecté chez {t['name']}",
+                "time": "Récent",
+                "source": "EDRCF Radar",
+                "severity": "high" if t["globalScore"] > 35 else "medium",
+                "location": "France",
+                "tags": [s["family"], t["sector"]]
+            })
+    return {"data": signals_feed}
 
 @app.get("/api/pipeline")
 def get_pipeline():
-    return {"data": MOCK_PIPELINE}
+    pipeline = [
+        { "id": "id", "title": "Identification", "cards": [] },
+        { "id": "qual", "title": "Qualification", "cards": [] },
+        { "id": "prep", "title": "Cible à Préparer", "cards": [] },
+        { "id": "prio", "title": "Cible Prioritaire", "cards": [] },
+        { "id": "opp", "title": "Opportunité Forte", "cards": [] }
+    ]
+    
+    for t in MOCK_TARGETS:
+        level = t["priorityLevel"]
+        card = {
+            "id": t["id"],
+            "name": t["name"],
+            "sector": t["sector"],
+            "score": t["globalScore"],
+            "tags": [t["analysis"]["type"]],
+            "priority": "high" if t["globalScore"] > 30 else "medium"
+        }
+        if level == "Opportunité Forte": pipeline[4]["cards"].append(card)
+        elif level == "Cible Prioritaire": pipeline[3]["cards"].append(card)
+        elif level == "Cible à Préparer": pipeline[2]["cards"].append(card)
+        elif level == "Watchlist": pipeline[1]["cards"].append(card)
+        else: pipeline[0]["cards"].append(card)
+        
+    return {"data": pipeline}
 
 @app.get("/api/copilot/query")
-def copilot_query(q: str = Query(..., min_length=1, description="Natural language query")):
-    if not q.strip():
-        raise HTTPException(status_code=400, detail="Query cannot be empty")
-    
-    time.sleep(1)  # Simulate LLM latency
-
-    # Mock hardcoded natural language responses based on keywords
-    q_lower = q.lower()
-    if "france" in q_lower:
-        return {"response": "I found 14 founder-led industrial companies in France exhibiting succession signals (founders older than 62, holding companies restructured recently). The top match is 'Industrie Lumiere SA' with a Transmission Score of 88."}
-    if "industrial" in q_lower:
-        return {"response": "There is a strong cluster of transaction preparation events in Industrial Software over the last 90 days. 7 companies have recently restructured their holding vehicles."}
-    if "succession" in q_lower:
-        return {"response": "I identified 23 succession signals across Europe this quarter — primarily in family-owned industrials. Aetherial SA ranks highest, with the founder aged 67 and no named successor."}
-    if "pipeline" in q_lower or "priorit" in q_lower:
-        return {"response": "Your top 3 priorities by combined score are: TechFlow Industrials (89), Aetherial SA (76), and NexSphere Healthcare (68). TechFlow has the shortest estimated transaction window at 3-6 months."}
-    return {"response": "Based on our data signals, there's a strong cluster of transaction preparation events in Industrial Software over the last 90 days. Would you like me to narrow this down by geography or deal type?"}
+def copilot_query(q: str = Query(...)):
+    time.sleep(1)
+    q_l = q.lower()
+    if "radar" in q_l or "signal" in q_l:
+        return {"response": "Le radar EDRCF 5.0 a identifié une convergence majeure chez TechFlow Industrials : création de holding + recrutement DAF + fondateur > 60 ans. Score de 42.5 (Opportunité Forte). Je recommande une approche via réseau alumni."}
+    return {"response": "Je peux analyser une cible spécifique ou filtrer le radar par famille de signaux (ex: Patrimonial, Dirigeant). Que souhaitez-vous approfondir ?"}
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
-
