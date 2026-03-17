@@ -204,10 +204,10 @@ export default function Home() {
                     </div>
                     
                     <div className="flex flex-wrap gap-3 mt-8">
-                      {target.signals.map((signal) => (
-                        <div key={signal} className="px-4 py-2 rounded-2xl bg-white/[0.03] text-gray-400 text-xs font-black uppercase tracking-widest flex items-center gap-2.5 border border-white/5 group-hover:bg-white/[0.05] transition-all">
+                      {target.topSignals.map((signal) => (
+                        <div key={signal.id} className="px-4 py-2 rounded-2xl bg-white/[0.03] text-gray-400 text-xs font-black uppercase tracking-widest flex items-center gap-2.5 border border-white/5 group-hover:bg-white/[0.05] transition-all">
                           <div className="w-2 h-2 rounded-full bg-indigo-500/50 shadow-[0_0_8px_rgba(79,70,229,0.5)]" />
-                          {signal}
+                          {signal.label}
                         </div>
                       ))}
                     </div>
@@ -215,10 +215,10 @@ export default function Home() {
                   
                   <div className="flex flex-col items-end">
                     <span className="text-7xl font-black text-white leading-none tracking-tighter bg-clip-text text-transparent bg-gradient-to-b from-white to-gray-800">
-                      {target.priorityScore}
+                      {target.globalScore}
                     </span>
                     <span className="text-[10px] uppercase tracking-[0.4em] text-indigo-400/80 font-black mt-3">
-                      Confidence
+                      Score Global
                     </span>
                   </div>
                 </div>
@@ -226,12 +226,12 @@ export default function Home() {
                 <div className="mt-10 pt-8 border-t border-white/[0.05] flex flex-col md:flex-row justify-between items-start md:items-center gap-6 relative z-10">
                   <div className="flex gap-8 sm:gap-12">
                     <div className="space-y-1.5">
-                      <span className="text-[10px] font-black text-gray-600 uppercase tracking-widest block">Core Thesis</span>
-                      <span className="text-base text-gray-200 font-bold tracking-tight">{target.dealType}</span>
+                      <span className="text-[10px] font-black text-gray-600 uppercase tracking-widest block">Type Probable</span>
+                      <span className="text-base text-gray-200 font-bold tracking-tight">{target.analysis.type}</span>
                     </div>
                     <div className="space-y-1.5">
-                      <span className="text-[10px] font-black text-gray-600 uppercase tracking-widest block">Detection Window</span>
-                      <span className="text-base text-gray-200 font-bold tracking-tight">{target.timeframe}</span>
+                      <span className="text-[10px] font-black text-gray-600 uppercase tracking-widest block">Fenêtre Estimée</span>
+                      <span className="text-base text-gray-200 font-bold tracking-tight">{target.analysis.window}</span>
                     </div>
                   </div>
                   

@@ -1,21 +1,37 @@
-export interface TargetScore {
-  transmission: number;
-  transaction: number;
-  preparation: number;
-  relationship: number;
-  timing: number;
+export interface Signal {
+  id: string;
+  label: string;
+  family: string;
+}
+
+export interface TargetAnalysis {
+  type: string;
+  window: string;
+  narrative: string;
+}
+
+export interface Activation {
+  deciders: string[];
+  approach: string;
+  reason: string;
+}
+
+export interface Risks {
+  falsePositive: string;
+  uncertainties: string;
 }
 
 export interface Target {
   id: string;
   name: string;
   sector: string;
-  priorityScore: number;
-  signals: string[];
-  dealType: string;
-  timeframe: string;
-  accessibility: string;
-  scores: TargetScore;
+  globalScore: number;
+  priorityLevel: string;
+  topSignals: Signal[];
+  analysis: TargetAnalysis;
+  activation: Activation;
+  risks: Risks;
+  scores: Record<string, number>;
 }
 
 export interface SearchResult {
@@ -30,5 +46,5 @@ export interface Message {
   role: "user" | "assistant";
   content: string;
   id: string;
-  timestamp: string; // ISO string for easier serialization
+  timestamp: string;
 }
