@@ -21,11 +21,13 @@ export default function MainLayout({
     <body
       className={`${interVariable} ${outfitVariable} antialiased bg-[#020202] text-gray-100 min-h-screen font-sans flex overflow-x-hidden`}
     >
-      <Sidebar isOpen={isSidebarOpen} setIsOpen={setIsSidebarOpen} />
+      <div className="print:hidden">
+        <Sidebar isOpen={isSidebarOpen} setIsOpen={setIsSidebarOpen} />
+      </div>
       
       <main className="flex-1 lg:ml-72 min-h-screen relative flex flex-col w-full">
         {/* Mobile Header */}
-        <header className="lg:hidden flex items-center justify-between p-6 bg-black/40 backdrop-blur-3xl border-b border-white/5 sticky top-0 z-[80]">
+        <header className="lg:hidden flex items-center justify-between p-6 bg-black/40 backdrop-blur-3xl border-b border-white/5 sticky top-0 z-[80] print:hidden">
           <div className="flex items-center gap-3">
              <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center">
                 <Zap size={16} className="text-white" />
@@ -52,7 +54,7 @@ export default function MainLayout({
         </div>
 
         {/* Quick Access Helper */}
-        <div className="fixed bottom-6 right-6 z-40 hidden md:block">
+        <div className="fixed bottom-6 right-6 z-40 hidden md:block print:hidden">
            <div className="flex items-center gap-3 px-4 py-2.5 rounded-full bg-white/5 border border-white/10 backdrop-blur-xl text-[10px] text-gray-400 font-black tracking-widest uppercase shadow-2xl">
               <span className="flex items-center gap-1.5 text-indigo-400">
                  <span className="p-1 rounded bg-indigo-500/10 border border-indigo-500/20">⌘</span> 
@@ -63,8 +65,10 @@ export default function MainLayout({
         </div>
       </main>
 
-      <CommandPalette />
-      <GlobalCopilot />
+      <div className="print:hidden">
+        <CommandPalette />
+        <GlobalCopilot />
+      </div>
     </body>
   );
 }

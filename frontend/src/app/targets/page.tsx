@@ -9,22 +9,22 @@ import { Target as TargetData } from "@/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
-type SortKey = "name" | "sector" | "dealType" | "priorityScore";
+type SortKey = "name" | "sector" | "globalScore";
 
 export default function TargetsPage() {
   const [targets, setTargets] = useState<TargetData[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [sortKey, setSortKey] = useState<SortKey>("priorityScore");
+  const [sortKey, setSortKey] = useState<SortKey>("globalScore");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [showFilters, setShowFilters] = useState(false);
   const [selectedSectors, setSelectedSectors] = useState<string[]>([]);
-  const [minScore, setMinScore] = useState(40);
+  const [minScore, setMinScore] = useState(0);
   
   const router = useRouter();
 
   useEffect(() => {
-    fetch(`${API_URL}/api/targets`)
+    fetch(`/api/targets`)
       .then(res => res.json())
       .then(data => {
         setTargets(data.data);
@@ -52,9 +52,9 @@ export default function TargetsPage() {
       .filter(t => 
         (t.name.toLowerCase().includes(search.toLowerCase()) ||
          t.sector.toLowerCase().includes(search.toLowerCase()) ||
-         t.dealType.toLowerCase().includes(search.toLowerCase())) &&
+         t.analysis.type.toLowerCase().includes(search.toLowerCase())) &&
         (selectedSectors.length === 0 || selectedSectors.includes(t.sector)) &&
-        t.priorityScore >= minScore
+        t.globalScore >= minScore
       )
       .sort((a, b) => {
         const valA = a[sortKey];
@@ -145,7 +145,7 @@ export default function TargetsPage() {
                  <button 
                    onClick={() => {
                      setSelectedSectors([]);
-                     setMinScore(40);
+                     setMinScore(0);
                    }}
                    className="w-full py-4 rounded-3xl bg-white/5 border border-white/10 text-[11px] font-black uppercase text-gray-500 hover:bg-rose-500/10 hover:text-rose-400 hover:border-rose-500/20 transition-all tracking-widest active:scale-95"
                  >
@@ -218,16 +218,15 @@ export default function TargetsPage() {
             Sub-Cluster {sortKey === "sector" && <ArrowUpDown size={14} className="text-indigo-400" />}
           </div>
           <div 
-            className="col-span-3 flex items-center gap-3 cursor-pointer hover:text-white transition-colors"
-            onClick={() => handleSort("dealType")}
+            className="col-span-3 flex items-center gap-3 cursor-not-allowed text-gray-700"
           >
-            Primary Thesis {sortKey === "dealType" && <ArrowUpDown size={14} className="text-indigo-400" />}
+            Primary Thesis
           </div>
           <div 
             className="col-span-2 flex items-center gap-3 cursor-pointer hover:text-white transition-colors justify-end text-right"
-            onClick={() => handleSort("priorityScore")}
+            onClick={() => handleSort("globalScore")}
           >
-            Confidence Metric {sortKey === "priorityScore" && <ArrowUpDown size={14} className="text-indigo-400" />}
+            Radar Score {sortKey === "globalScore" && <ArrowUpDown size={14} className="text-indigo-400" />}
           </div>
           <div className="col-span-1 text-right">Data</div>
         </div>
@@ -276,22 +275,22 @@ export default function TargetsPage() {
                     <div className="w-full lg:col-span-3 flex items-center justify-between lg:block">
                       <div className="lg:hidden text-[9px] font-black text-gray-600 uppercase tracking-widest">Thesis</div>
                       <div className="text-right lg:text-left">
-                        <div className="text-sm lg:text-base text-gray-200 font-bold tracking-tight mb-0.5">{target.dealType}</div>
-                        <div className="text-[9px] lg:text-[10px] font-black text-gray-600 uppercase tracking-[0.2em]">{target.timeframe} Range</div>
+                        <div className="text-sm lg:text-base text-gray-200 font-bold tracking-tight mb-0.5">{target.analysis.type}</div>
+                        <div className="text-[9px] lg:text-[10px] font-black text-gray-600 uppercase tracking-[0.2em]">{target.analysis.window} Window</div>
                       </div>
                     </div>
 
                     <div className="w-full lg:col-span-2 flex items-center justify-between lg:justify-end lg:text-right">
-                      <span className="lg:hidden text-[9px] font-black text-gray-600 uppercase tracking-widest">Confidence</span>
+                      <span className="lg:hidden text-[9px] font-black text-gray-600 uppercase tracking-widest">Radar Score</span>
                       <div className="flex items-center gap-4 lg:flex-col lg:items-end lg:gap-0">
                         <span className="text-2xl lg:text-4xl font-black bg-clip-text text-transparent bg-gradient-to-b from-white to-gray-800 leading-none tracking-tighter">
-                          {target.priorityScore}
+                          {target.globalScore}
                         </span>
                         <div className="hidden lg:block w-20 h-1.5 bg-white/5 rounded-full mt-3 overflow-hidden p-[1px]">
                            <motion.div 
                              initial={{ width: 0 }}
-                             animate={{ width: `${target.priorityScore}%` }}
-                             className="h-full bg-indigo-500 shadow-[0_0_10px_rgba(79,70,229,0.5)] rounded-full" 
+                             animate={{ width: `${target.globalScore}%` }}
+                             className="h-full bg-indigo-50 shadow-[0_0_10px_rgba(79,70,229,0.5)] rounded-full" 
                            />
                         </div>
                       </div>
