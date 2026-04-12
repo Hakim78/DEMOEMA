@@ -108,7 +108,7 @@ export default function ReportPage() {
                <div className="w-12 h-12 bg-black flex items-center justify-center rounded-xl">
                   <Fingerprint size={28} className="text-white" />
                </div>
-               <span className="font-black text-3xl tracking-tighter uppercase">EDRCF 5.0</span>
+               <span className="font-black text-3xl tracking-tighter uppercase">EDRCF 6.0</span>
             </div>
             <h1 className="text-5xl font-black tracking-tighter mb-2 italic uppercase">Dossier : Origination</h1>
             <p className="text-gray-500 font-bold uppercase tracking-[0.3em] text-xs">Weak Signals Radar • {mounted ? currentDate : "Loading..."}</p>

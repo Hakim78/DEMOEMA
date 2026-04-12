@@ -19,14 +19,14 @@ export default function MainLayout({
         <Sidebar isOpen={isSidebarOpen} setIsOpen={setIsSidebarOpen} />
       </div>
       
-      <main className="flex-1 lg:ml-72 min-h-screen relative flex flex-col w-full">
+      <main className="flex-1 lg:ml-72 min-h-screen relative flex flex-col w-full overflow-x-hidden">
         {/* Mobile Header */}
         <header className="lg:hidden flex items-center justify-between p-6 bg-black/40 backdrop-blur-3xl border-b border-white/5 sticky top-0 z-[80] print:hidden">
           <div className="flex items-center gap-3">
              <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center">
                 <Zap size={16} className="text-white" />
              </div>
-             <span className="text-white font-black text-sm tracking-tighter uppercase block leading-none">EdRCF 5.0</span>
+             <span className="text-white font-black text-sm tracking-tighter uppercase block leading-none">EdRCF 6.0</span>
           </div>
           <button 
             onClick={() => setIsSidebarOpen(true)}
