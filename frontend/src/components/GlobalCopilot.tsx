@@ -2,10 +2,10 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-  Sparkles, Send, X, Minimize2, Maximize2, 
+import {
+  Sparkles, Send, X, Minimize2, Maximize2,
   Terminal, User, Activity, Target, Zap, TrendingUp,
-  MessageSquare, Layers
+  MessageSquare, Layers, Bot, Database
 } from "lucide-react";
 import { usePathname } from "next/navigation";
 
@@ -14,6 +14,72 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   timestamp: number;
+  source?: "claude-ai" | "rule-based";
+}
+
+/** Render simple markdown: **bold**, bullet lists, line breaks */
+function renderMarkdown(text: string) {
+  const lines = text.split("\n");
+  const elements: React.ReactNode[] = [];
+
+  lines.forEach((line, i) => {
+    const trimmed = line.trim();
+
+    // Bullet list items
+    if (trimmed.startsWith("- ") || trimmed.startsWith("• ") || trimmed.startsWith("* ")) {
+      const content = trimmed.slice(2);
+      elements.push(
+        <div key={i} className="flex gap-2 items-start ml-2 my-0.5">
+          <span className="text-indigo-400 mt-0.5 shrink-0">&bull;</span>
+          <span>{renderInline(content)}</span>
+        </div>
+      );
+    } else if (trimmed.startsWith("# ")) {
+      elements.push(
+        <div key={i} className="font-black text-white text-sm uppercase tracking-widest mt-2 mb-1">
+          {renderInline(trimmed.slice(2))}
+        </div>
+      );
+    } else if (trimmed.startsWith("## ")) {
+      elements.push(
+        <div key={i} className="font-black text-gray-300 text-xs uppercase tracking-widest mt-2 mb-1">
+          {renderInline(trimmed.slice(3))}
+        </div>
+      );
+    } else if (trimmed === "") {
+      elements.push(<div key={i} className="h-2" />);
+    } else {
+      elements.push(
+        <div key={i} className="my-0.5">{renderInline(trimmed)}</div>
+      );
+    }
+  });
+
+  return <>{elements}</>;
+}
+
+/** Render inline markdown: **bold** */
+function renderInline(text: string): React.ReactNode {
+  const parts: React.ReactNode[] = [];
+  const regex = /\*\*(.+?)\*\*/g;
+  let lastIndex = 0;
+  let match;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+    parts.push(
+      <span key={match.index} className="font-black text-white">{match[1]}</span>
+    );
+    lastIndex = regex.lastIndex;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+
+  return parts.length > 0 ? <>{parts}</> : text;
 }
 
 export default function GlobalCopilot() {
@@ -39,7 +105,7 @@ export default function GlobalCopilot() {
 
   const handleSend = async (e?: React.FormEvent, directValue?: string) => {
     if (e) e.preventDefault();
-    
+
     const query = directValue || input;
     if (!query.trim() || isLoading) return;
 
@@ -56,14 +122,20 @@ export default function GlobalCopilot() {
 
     try {
       const res = await fetch(`/api/copilot/query?q=${encodeURIComponent(query)}`);
-      if (!res.ok) throw new Error("API Connection Failed");
+      if (!res.ok) throw new Error("Connexion API echouee");
       const data = await res.json();
+
+      // If copilot injected new targets, notify dashboard to refresh
+      if (data.targets_updated) {
+        window.dispatchEvent(new CustomEvent("targets-updated"));
+      }
 
       const assistantMsg: Message = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
-        content: data.response || "I'm having trouble processing that request. Please try again.",
+        content: data.response || "Je n'ai pas pu traiter cette demande. Veuillez reessayer.",
         timestamp: Date.now(),
+        source: data.source || undefined,
       };
       setMessages(prev => [...prev, assistantMsg]);
     } catch (err) {
@@ -71,7 +143,7 @@ export default function GlobalCopilot() {
       const errorMsg: Message = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
-        content: "CRITICAL CONNECTION ERROR: Unable to establish secure link to EDRCF neural processors. Please verify local host status.",
+        content: "ERREUR DE CONNEXION: Impossible d'etablir le lien avec les processeurs EDRCF. Verifiez le statut du serveur.",
         timestamp: Date.now(),
       };
       setMessages(prev => [...prev, errorMsg]);
@@ -114,21 +186,21 @@ export default function GlobalCopilot() {
                   <Sparkles size={20} />
                 </div>
                 <div>
-                   <h3 className="text-sm font-black text-white uppercase tracking-widest leading-none mb-1">EDRCF Copilot</h3>
+                   <h3 className="text-sm font-black text-white uppercase tracking-widest leading-none mb-1">EDRCF 6.0 Copilot</h3>
                    <div className="flex items-center gap-1.5 ">
                       <div className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
-                      <span className="text-[8px] font-black text-emerald-500/60 uppercase tracking-widest">Neural Link Active</span>
+                      <span className="text-[8px] font-black text-emerald-500/60 uppercase tracking-widest">Lien Neuronal Actif</span>
                    </div>
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <button 
+                <button
                   onClick={() => setIsMinimized(!isMinimized)}
                   className="p-2 rounded-xl bg-white/5 text-gray-400 hover:text-white transition-colors"
                 >
                   {isMinimized ? <Maximize2 size={16} /> : <Minimize2 size={16} />}
                 </button>
-                <button 
+                <button
                   onClick={() => setIsOpen(false)}
                   className="p-2 rounded-xl bg-white/5 text-gray-400 hover:text-white transition-colors"
                 >
@@ -140,16 +212,16 @@ export default function GlobalCopilot() {
             {/* Chat Area */}
             {!isMinimized && (
               <>
-                <div 
+                <div
                   ref={scrollRef}
                   className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar"
                 >
                   {messages.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center opacity-40 text-center space-y-4 px-10">
                        <Target size={40} className="text-indigo-400 mb-2" />
-                       <p className="text-xs font-black text-white uppercase tracking-[0.2em]">EDRCF Intel Protocol</p>
+                       <p className="text-xs font-black text-white uppercase tracking-[0.2em]">Protocole Intelligence EDRCF</p>
                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest leading-relaxed">
-                          Monitoring 2,408 entities. Ready for deep-dive analysis or sector mapping.
+                          Surveillance de 2 408 entites. Pret pour une analyse approfondie, un mapping sectoriel ou une recherche de cibles.
                        </p>
                     </div>
                   ) : (
@@ -161,20 +233,36 @@ export default function GlobalCopilot() {
                         className={`flex gap-4 ${m.role === "user" ? "flex-row-reverse" : ""}`}
                       >
                         <div className={`w-8 h-8 rounded-xl shrink-0 flex items-center justify-center border
-                          ${m.role === "user" 
-                            ? "bg-white/5 border-white/10 text-gray-400" 
+                          ${m.role === "user"
+                            ? "bg-white/5 border-white/10 text-gray-400"
                             : "bg-indigo-500/10 border-indigo-500/20 text-indigo-400"}
                         `}>
                           {m.role === "user" ? <User size={16} /> : <Sparkles size={16} />}
                         </div>
                         <div className={`max-w-[80%] rounded-2xl p-4 text-[13px] leading-relaxed
-                          ${m.role === "user" 
-                            ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/10 rounded-tr-none" 
+                          ${m.role === "user"
+                            ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/10 rounded-tr-none"
                             : "bg-white/[0.03] border border-white/10 text-gray-300 shadow-xl rounded-tl-none"}
                         `}>
-                          {m.content}
-                          <div className={`text-[9px] mt-2 opacity-40 font-bold uppercase tracking-widest ${m.role === "user" ? "text-right" : ""}`}>
-                            {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {m.role === "assistant" ? renderMarkdown(m.content) : m.content}
+
+                          <div className={`flex items-center gap-3 mt-2 ${m.role === "user" ? "justify-end" : "justify-between"}`}>
+                            <div className={`text-[9px] opacity-40 font-bold uppercase tracking-widest`}>
+                              {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                            {m.role === "assistant" && m.source && (
+                              <div className={`flex items-center gap-1 text-[8px] font-black uppercase tracking-widest rounded-md px-2 py-0.5 border
+                                ${m.source === "claude-ai"
+                                  ? "bg-purple-500/10 text-purple-400 border-purple-500/10"
+                                  : "bg-emerald-500/10 text-emerald-400 border-emerald-500/10"}
+                              `}>
+                                {m.source === "claude-ai" ? (
+                                  <><Bot size={9} /> Claude AI</>
+                                ) : (
+                                  <><Database size={9} /> Base EDRCF</>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </motion.div>
@@ -198,12 +286,13 @@ export default function GlobalCopilot() {
                 {messages.length < 3 && (
                    <div className="px-6 py-2 flex gap-2 overflow-x-auto scrollbar-hide">
                       {[
-                        "TOP STRATEGIC TARGETS",
-                        "TECHFLOW DEEP-DIVE",
-                        "INTENSITY MAPPING",
-                        "ANALYZE BIOGRID"
+                        "Top 5 cibles",
+                        "Fondateurs > 60 ans",
+                        "Analyse sectorielle",
+                        "Etat du pipeline",
+                        "Filtres disponibles"
                       ].map(s => (
-                        <button 
+                        <button
                           key={s}
                           onClick={() => {
                             setInput(s);
@@ -219,7 +308,7 @@ export default function GlobalCopilot() {
 
                 {/* Input Area */}
                 <div className="p-6 bg-white/[0.02] border-t border-white/10">
-                  <form 
+                  <form
                     onSubmit={handleSend}
                     className="relative"
                   >
@@ -232,11 +321,11 @@ export default function GlobalCopilot() {
                           handleSend();
                         }
                       }}
-                      placeholder="Ask the engine anything..."
+                      placeholder="Posez votre question a l'intelligence EDRCF..."
                       rows={1}
                       className="w-full bg-white/[0.05] border border-white/10 rounded-2xl py-4 pl-4 pr-14 text-sm text-white placeholder-gray-600 outline-none focus:border-indigo-500/50 transition-all resize-none"
                     />
-                    <button 
+                    <button
                       type="submit"
                       disabled={!input.trim() || isLoading}
                       className={`absolute right-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-xl flex items-center justify-center transition-all
@@ -248,10 +337,10 @@ export default function GlobalCopilot() {
                   </form>
                   <div className="mt-4 flex items-center justify-between">
                      <div className="flex items-center gap-2 text-[10px] text-gray-600 font-black uppercase tracking-widest">
-                        <Terminal size={12} /> Context Awareness: Active
+                        <Terminal size={12} /> Contexte: Actif
                      </div>
                      <div className="flex items-center gap-2 text-[10px] text-gray-600 font-bold">
-                        Press ↵ to send
+                        Entree pour envoyer
                      </div>
                   </div>
                 </div>

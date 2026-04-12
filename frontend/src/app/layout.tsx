@@ -14,8 +14,8 @@ const outfit = Outfit({
 });
 
 export const metadata: Metadata = {
-  title: "EdRCF 5.0 | AI Origination Engine",
-  description: "Proprietary intelligence for M&A and Private Equity origination.",
+  title: "EdRCF 6.0 | AI Origination Platform",
+  description: "Plateforme d'origination M&A propulsée par l'IA — Edmond de Rothschild Corporate Finance.",
 };
 
 export default function RootLayout({
