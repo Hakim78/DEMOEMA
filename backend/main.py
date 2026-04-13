@@ -1279,9 +1279,16 @@ async def get_news_for_company(siren: str):
     Returns articles with M&A signal detection.
     """
     siren = siren.strip().replace(" ", "")
-    # Find company name from enriched targets
+    # Find company name: 1) enriched_targets, 2) Pappers live lookup, 3) fallback SIREN
     target = next((t for t in enriched_targets if t.get("siren") == siren), None)
-    company_name = target["name"] if target else siren
+    if target:
+        company_name = target["name"]
+    else:
+        try:
+            pappers_data = await get_pappers_company(siren)
+            company_name = (pappers_data or {}).get("nom_entreprise") or siren
+        except Exception:
+            company_name = siren
 
     articles = await get_google_news(company_name)
     # Aggregate detected signals across all articles
