@@ -211,7 +211,6 @@ def detect_signals(company_info, search_had_age_filter=False):
     for rep in representants:
         age = rep.get("age", 0)
         if not age:
-            # Try to calculate from date_de_naissance
             ddn = rep.get("date_de_naissance", "")
             if ddn:
                 try:
@@ -232,6 +231,11 @@ def detect_signals(company_info, search_had_age_filter=False):
         if age >= 65:
             if "director_withdrawal" not in signals:
                 signals.append("director_withdrawal")
+
+        # --- Dirigeant multi-mandats ---
+        autres_mandats = rep.get("autres_mandats", []) or rep.get("entreprises", []) or []
+        if len(autres_mandats) >= 2 and "dirigeant_multi_mandats" not in signals:
+            signals.append("dirigeant_multi_mandats")
 
     # --- Force founder signal if search had age filter ---
     if search_had_age_filter and "founder_60_no_successor" not in signals:
@@ -269,14 +273,67 @@ def detect_signals(company_info, search_had_age_filter=False):
 
     # --- Holding creation signal ---
     libelle = (company_info.get("libelle_code_naf", "") or "").lower()
-    nom = (company_info.get("nom_entreprise", "") or "").lower()
-    if "holding" in libelle or "holding" in nom:
+    nom_co = (company_info.get("nom_entreprise", "") or "").lower()
+    code_naf_co = company_info.get("code_naf", "") or ""
+    if (
+        "holding" in libelle
+        or "holding" in nom_co
+        or code_naf_co.startswith("64.2")
+        or code_naf_co.startswith("64.3")
+    ):
         signals.append("holding_creation")
 
-    # --- Big4 audit signal (scoring_financier present) ---
-    scoring_fi = company_info.get("scoring_financier")
-    if scoring_fi:
+    # --- Big4 audit signal (scoring_non_financier present = donnees riches disponibles) ---
+    scoring_nfi = company_info.get("scoring_non_financier")
+    if scoring_nfi:
         signals.append("big4_audit")
+
+    # --- Score Pappers risque (scoring_non_financier, seul disponible via MCP) ---
+    score_nfi = None
+    if isinstance(scoring_nfi, dict):
+        score_nfi = scoring_nfi.get("score")
+    elif isinstance(scoring_nfi, (int, float)):
+        score_nfi = scoring_nfi
+    if score_nfi is not None:
+        try:
+            if float(score_nfi) >= 7:
+                signals.append("score_pappers_risque")
+        except (TypeError, ValueError):
+            pass
+
+    # --- Publications BODACC ---
+    # Structure reelle Pappers : {type, date, description, administration, bodacc, numero_annonce}
+    # "type" vaut : "Modification", "Immatriculation", "Vente", "Radiation", "Depot des comptes"...
+    bodacc = company_info.get("publications_bodacc") or []
+    if isinstance(bodacc, list):
+        for pub in bodacc:
+            type_pub = (pub.get("type") or "").lower()
+            desc = (pub.get("description") or "").lower()
+            admin = (pub.get("administration") or "").lower()
+            combined = f"{type_pub} {desc} {admin}"
+            if any(w in combined for w in ["vente", "cession"]):
+                if "bodacc_cession" not in signals:
+                    signals.append("bodacc_cession")
+            if any(w in combined for w in ["capital", "augmentation", "reduction"]):
+                if "bodacc_capital_change" not in signals:
+                    signals.append("bodacc_capital_change")
+            if any(w in combined for w in ["dissolution", "liquidation", "radiation"]):
+                if "bodacc_dissolution" not in signals:
+                    signals.append("bodacc_dissolution")
+            if any(w in combined for w in ["transfert", "adresse du siege"]):
+                if "hq_relocation" not in signals:
+                    signals.append("hq_relocation")
+
+    # --- Procédures collectives ---
+    # Champs reels Pappers : procedure_collective_existe, procedure_collective_en_cours, procedures_collectives
+    if (
+        company_info.get("procedure_collective_en_cours")
+        or company_info.get("procedure_collective_existe")
+        or (isinstance(company_info.get("procedures_collectives"), list)
+            and len(company_info["procedures_collectives"]) > 0)
+    ):
+        if "procedure_collective" not in signals:
+            signals.append("procedure_collective")
 
     # --- Fallback: press_regional if no signals detected ---
     if not signals:
@@ -524,13 +581,56 @@ def build_target(idx, company_info, search_info, search_had_age_filter=False):
         "edr_banker": None,
     }
 
-    # --- Group ---
+    # --- Statut activite ---
+    entreprise_cessee = company_info.get("entreprise_cessee", False)
+    date_cessation = company_info.get("date_cessation", None)
+    statut_activite = "Radie" if entreprise_cessee else "En activite"
+    procedure_en_cours = company_info.get("procedure_collective_en_cours", False)
+
+    # --- Group / Holding ---
     etablissements = company_info.get("etablissements", [])
-    is_group = isinstance(etablissements, list) and len(etablissements) > 1
+    beneficiaires = company_info.get("beneficiaires_effectifs", [])
+    nom_lower = (nom or "").lower()
+    libelle_lower = (libelle_naf or "").lower()
+    code_naf_str = code_naf or ""
+
+    # Detecter si c'est une holding (NAF 64.2x / 64.3x ou nom)
+    is_holding = (
+        "holding" in nom_lower
+        or "holding" in libelle_lower
+        or code_naf_str.startswith("64.2")
+        or code_naf_str.startswith("64.3")
+    )
+
+    # Societe mere via beneficiaires_effectifs (personne morale uniquement)
+    parent_name = None
+    for be in beneficiaires:
+        be_type = (be.get("type", "") or "").lower()
+        if "societe" in be_type or "morale" in be_type:
+            parent_name = be.get("denomination") or be.get("nom")
+            break
+
+    # Etablissements secondaires
+    subsidiaries = []
+    if isinstance(etablissements, list):
+        for etab in etablissements[1:6]:
+            etab_siret = etab.get("siret", "")
+            etab_ville = etab.get("ville", "")
+            if etab_siret:
+                subsidiaries.append({
+                    "siret": etab_siret,
+                    "city": etab_ville,
+                })
+
+    is_group = is_holding or (parent_name is not None) or (isinstance(etablissements, list) and len(etablissements) > 1)
+
     group = {
         "is_group": is_group,
-        "parent": None,
-        "subsidiaries": [],
+        "is_holding": is_holding,
+        "parent": parent_name,
+        "subsidiaries": subsidiaries,
+        "nb_etablissements": len(etablissements) if isinstance(etablissements, list) else 0,
+        "procedure_collective_en_cours": procedure_en_cours,
         "consolidated_revenue": None,
     }
 
@@ -550,6 +650,8 @@ def build_target(idx, company_info, search_info, search_had_age_filter=False):
         "code_naf": code_naf or "",
         "creation_date": date_creation or "",
         "structure": structure,
+        "statut_activite": statut_activite,
+        "date_cessation": date_cessation,
         "publication_status": "Publie",
         "dirigeants": dirigeants if dirigeants else [{"name": nom, "role": "Dirigeant", "age": 0, "since": ""}],
         "financials": financials,
@@ -690,7 +792,10 @@ async def load_targets_from_pappers(mcp_url, count=10):
                     "date_creation", "code_naf", "libelle_code_naf", "effectif",
                     "forme_juridique", "capital", "finances",
                     "beneficiaires_effectifs", "etablissements",
-                    "scoring_financier", "scoring_non_financier",
+                    "entreprise_cessee", "date_cessation",
+                    "procedure_collective_existe", "procedure_collective_en_cours",
+                    "procedures_collectives", "publications_bodacc",
+                    "scoring_non_financier",
                 ],
             })
 

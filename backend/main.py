@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any, Optional
+import asyncio
 import time
 import copy
 import json
@@ -229,11 +230,17 @@ async def get_pappers_company(siren: str):
     """Get company details via Pappers MCP."""
     result = await call_pappers_mcp("informations-entreprise", {
         "siren": siren,
-        "return_fields": ["siren", "nom_entreprise", "siege", "representants",
-                          "date_creation", "code_naf", "libelle_code_naf", "effectif",
-                          "forme_juridique", "capital", "finances",
-                          "beneficiaires_effectifs", "etablissements",
-                          "scoring_financier", "scoring_non_financier"]
+        "return_fields": [
+            "siren", "nom_entreprise", "siege", "representants",
+            "date_creation", "code_naf", "libelle_code_naf", "effectif",
+            "forme_juridique", "capital", "finances",
+            "beneficiaires_effectifs", "etablissements",
+            "entreprise_cessee", "date_cessation",
+            "procedure_collective_existe", "procedure_collective_en_cours",
+            "procedures_collectives",
+            "scoring_non_financier",
+            # Note: publications_bodacc exclu ici (trop volumineux, endpoint dedie /bodacc/{siren})
+        ],
     })
     if result:
         if isinstance(result, dict) and "content" in result:
@@ -245,6 +252,82 @@ async def get_pappers_company(siren: str):
                         return {"raw": block["text"]}
         return result
     return None
+
+
+def _extract_group_info(data: dict, cartographie: dict = None) -> dict:
+    """
+    Extrait les informations groupe/holding/statut depuis les donnees Pappers.
+    Utilise informations-entreprise + optionnellement cartographie-entreprise.
+    """
+    nom = (data.get("nom_entreprise") or "").lower()
+    libelle_naf = (data.get("libelle_code_naf") or "").lower()
+    code_naf = data.get("code_naf") or ""
+    etablissements = data.get("etablissements") or []
+    beneficiaires = data.get("beneficiaires_effectifs") or []
+
+    # --- Statut activite ---
+    cessee = data.get("entreprise_cessee", False)
+    statut = "Radie" if cessee else "En activite"
+    date_cessation = data.get("date_cessation")
+
+    # --- Holding (detection par NAF + nom) ---
+    is_holding = (
+        "holding" in nom
+        or "holding" in libelle_naf
+        or code_naf.startswith("64.2")
+        or code_naf.startswith("64.3")
+        or code_naf.startswith("65.23")
+    )
+
+    # --- Societe mere via beneficiaires_effectifs (personne morale) ---
+    parent = None
+    for be in beneficiaires:
+        be_type = (be.get("type") or "").lower()
+        if "societe" in be_type or "morale" in be_type or "personne morale" in be_type:
+            parent = {
+                "siren": be.get("siren"),
+                "name": be.get("denomination") or be.get("nom"),
+                "pourcentage": be.get("pourcentage_parts"),
+            }
+            break
+
+    # --- Groupe via cartographie-entreprise (si disponible) ---
+    entreprises_liees = []
+    if cartographie and isinstance(cartographie, dict):
+        carto_entreprises = cartographie.get("entreprises") or []
+        siren_cible = data.get("siren")
+        for e in carto_entreprises:
+            if e.get("siren") != siren_cible:
+                entreprises_liees.append({
+                    "siren": e.get("siren"),
+                    "name": e.get("nom_entreprise"),
+                })
+        if entreprises_liees:
+            is_holding = True  # S'il y a des entreprises liées, c'est un groupe
+
+    # --- Etablissements secondaires ---
+    secondary_sites = []
+    if isinstance(etablissements, list):
+        for e in etablissements[1:6]:
+            secondary_sites.append({
+                "siret": e.get("siret"),
+                "ville": e.get("ville"),
+                "code_postal": e.get("code_postal"),
+                "activite": e.get("libelle_code_naf") or e.get("activite_principale"),
+            })
+
+    is_group = is_holding or (parent is not None) or len(etablissements) > 1 or len(entreprises_liees) > 0
+
+    return {
+        "statut_activite": statut,
+        "date_cessation": date_cessation,
+        "is_group": is_group,
+        "is_holding": is_holding,
+        "parent": parent,
+        "entreprises_liees": entreprises_liees,
+        "nb_etablissements": len(etablissements),
+        "secondary_sites": secondary_sites,
+    }
 
 
 async def get_pappers_dirigeants(siren: str):
@@ -260,6 +343,140 @@ async def get_pappers_dirigeants(siren: str):
                         return {"raw": block["text"]}
         return result
     return None
+
+
+def _validate_siren(siren: str) -> str:
+    """Valide et nettoie un SIREN. Leve HTTPException si invalide."""
+    siren = siren.strip().replace(" ", "")
+    if not siren.isdigit() or len(siren) != 9:
+        raise HTTPException(status_code=400, detail="SIREN invalide — doit contenir 9 chiffres")
+    return siren
+
+
+def _parse_mcp_json(result) -> Optional[dict]:
+    """Extrait le JSON depuis une reponse MCP (content blocks ou direct)."""
+    if not result:
+        return None
+    if isinstance(result, dict) and "content" in result:
+        for block in result["content"]:
+            if block.get("type") == "text":
+                try:
+                    return json.loads(block["text"])
+                except json.JSONDecodeError:
+                    return {"raw": block["text"]}
+    return result if isinstance(result, dict) else None
+
+
+async def get_pappers_bodacc(siren: str) -> Optional[dict]:
+    """
+    Recupere les publications BODACC via informations-entreprise (champ publications_bodacc).
+    Structure reelle Pappers : {type, date, description, administration, bodacc, numero_annonce}
+    """
+    result = await call_pappers_mcp("informations-entreprise", {
+        "siren": siren,
+        "return_fields": [
+            "siren", "nom_entreprise",
+            "entreprise_cessee", "date_cessation",
+            "publications_bodacc",
+            "procedure_collective_existe", "procedure_collective_en_cours",
+            "procedures_collectives",
+        ],
+    })
+    data = _parse_mcp_json(result)
+    if data:
+        return data
+    return None
+
+
+async def get_pappers_procedures(siren: str) -> Optional[dict]:
+    """Recupere les procedures collectives et le statut d'activite via Pappers MCP."""
+    result = await call_pappers_mcp("informations-entreprise", {
+        "siren": siren,
+        "return_fields": [
+            "siren", "nom_entreprise", "entreprise_cessee", "date_cessation",
+            "procedure_collective_existe", "procedure_collective_en_cours",
+            "procedures_collectives", "scoring_non_financier",
+        ],
+    })
+    return _parse_mcp_json(result)
+
+
+async def get_cartographie(siren: str) -> Optional[dict]:
+    """
+    Recupere la cartographie d'une entreprise : entreprises liees et dirigeants.
+    Outil reel Pappers : cartographie-entreprise
+    """
+    result = await call_pappers_mcp("cartographie-entreprise", {
+        "siren": siren,
+        "inclure_entreprises_dirigees": True,
+        "inclure_sci": False,
+    })
+    return _parse_mcp_json(result)
+
+
+async def get_comptes(siren: str, annee: str = "") -> Optional[dict]:
+    """
+    Recupere les comptes annuels detailles (bilan, liasses) via Pappers MCP.
+    Outil reel : comptes-entreprise.
+    Note : peut timeout sur les grandes entreprises (reponse volumineuse).
+    """
+    args: Dict[str, Any] = {"siren": siren}
+    if annee:
+        args["annee"] = annee
+    try:
+        # Timeout etendu a 60s car comptes-entreprise peut etre volumineux
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                PAPPERS_MCP_URL,
+                headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+                json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                      "params": {"name": "comptes-entreprise", "arguments": args}},
+            )
+            if resp.status_code == 200:
+                content_type = resp.headers.get("content-type", "")
+                if "text/event-stream" in content_type:
+                    for line in resp.text.split("\n"):
+                        if line.startswith("data: "):
+                            d = json.loads(line[6:])
+                            if "result" in d:
+                                return _parse_mcp_json(d["result"])
+                    return None
+                else:
+                    return _parse_mcp_json(resp.json().get("result"))
+            print(f"[Pappers comptes] HTTP {resp.status_code}")
+    except (httpx.TimeoutException, httpx.ReadTimeout) as e:
+        print(f"[Pappers comptes] Timeout pour SIREN {siren}: {e}")
+    except Exception as e:
+        print(f"[Pappers comptes] Erreur pour SIREN {siren}: {e}")
+    return None
+
+
+async def search_dirigeant_by_name(q: str) -> Optional[dict]:
+    """
+    Recherche toutes les entreprises ou une personne est dirigeante.
+    Outil reel : recherche-dirigeants avec parametre q (nom + prenom concatenes).
+    """
+    result = await call_pappers_mcp("recherche-dirigeants", {
+        "q": q,
+        "par_page": 20,
+        "siege": False,
+    })
+    return _parse_mcp_json(result)
+
+
+async def get_pappers_concurrents(code_naf: str, departement: str = "", ca_min: int = 0) -> Optional[dict]:
+    """Recherche les entreprises concurrentes (meme code NAF, meme departement)."""
+    args: Dict[str, Any] = {
+        "code_naf": code_naf,
+        "entreprise_cessee": False,
+        "par_page": 20,
+    }
+    if departement:
+        args["departement"] = departement
+    if ca_min > 0:
+        args["chiffre_affaires_min"] = str(ca_min)
+    result = await call_pappers_mcp("recherche-entreprises", args)
+    return _parse_mcp_json(result)
 
 
 # ==========================================================================
@@ -404,9 +621,13 @@ async def search_pappers_edrcf(
     departement: Optional[str] = Query(None),
     capital_min: Optional[str] = Query(None),
     par_page: str = Query("10"),
+    inclure_radiees: bool = Query(False, description="Inclure les entreprises radiees (defaut: non)"),
 ):
     """Search Pappers with EdRCF-specific M&A filters."""
-    filters = {"par_page": par_page}
+    filters = {
+        "par_page": par_page,
+        "entreprise_cessee": "true" if inclure_radiees else "false",
+    }
     if code_naf:
         filters["code_naf"] = code_naf
     if age_dirigeant_min:
@@ -427,6 +648,16 @@ async def search_pappers_edrcf(
         for r in pappers_data["resultats"][:int(par_page)]:
             siege = r.get("siege", {}) or {}
             ca = r.get("chiffre_affaires")
+            cessee = r.get("entreprise_cessee", False)
+            nom = (r.get("nom_entreprise") or "").lower()
+            libelle = (r.get("libelle_code_naf") or "").lower()
+            code_naf_r = r.get("code_naf") or ""
+            is_holding = (
+                "holding" in nom
+                or "holding" in libelle
+                or code_naf_r.startswith("64.2")
+                or code_naf_r.startswith("64.3")
+            )
             companies.append({
                 "siren": r.get("siren", ""),
                 "name": r.get("nom_entreprise", ""),
@@ -441,6 +672,8 @@ async def search_pappers_edrcf(
                 "chiffre_affaires": ca,
                 "chiffre_affaires_fmt": f"{ca/1e6:.1f}M EUR" if ca and ca > 0 else "N/A",
                 "resultat": r.get("resultat"),
+                "statut_activite": "Radie" if cessee else "En activite",
+                "is_holding": is_holding,
             })
         return {"data": companies, "total": pappers_data.get("total", 0), "source": "pappers-mcp"}
     return {"data": pappers_data, "source": "pappers-mcp"}
@@ -462,6 +695,465 @@ async def get_pappers_dirigeants_endpoint(siren: str):
     if data:
         return {"data": data, "source": "pappers-mcp"}
     raise HTTPException(status_code=404, detail="Dirigeants non trouves via Pappers")
+
+
+@app.get("/api/pappers/siren/{siren}")
+async def get_company_by_siren(siren: str):
+    """
+    Recherche une entreprise par son numero SIREN.
+    Retourne les informations completes incluant :
+    - Statut activite (En activite / Radie)
+    - Appartenance a un groupe ou holding
+    - Societe mere et actionnaires
+    - Etablissements secondaires
+    """
+    siren = _validate_siren(siren)
+
+    # Appels paralleles : infos generales + cartographie (cartographie peut timeout sur grandes entreprises)
+    res = await asyncio.gather(
+        get_pappers_company(siren),
+        get_cartographie(siren),
+        return_exceptions=True,
+    )
+    data = res[0] if not isinstance(res[0], Exception) else None
+    carto = res[1] if not isinstance(res[1], Exception) else None
+
+    if not data or not isinstance(data, dict) or "raw" in data:
+        raise HTTPException(status_code=404, detail=f"Entreprise SIREN {siren} non trouvee via Pappers")
+
+    group_info = _extract_group_info(data, carto)
+    siege = data.get("siege") or {}
+    finances = data.get("finances") or []
+    ca = finances[0].get("chiffre_affaires") if finances else None
+
+    return {
+        "source": "pappers-mcp",
+        "data": {
+            "siren": data.get("siren"),
+            "nom_entreprise": data.get("nom_entreprise"),
+            "forme_juridique": data.get("forme_juridique"),
+            "date_creation": data.get("date_creation"),
+            "capital": data.get("capital"),
+            "code_naf": data.get("code_naf"),
+            "libelle_naf": data.get("libelle_code_naf"),
+            "effectif": data.get("effectif"),
+            "siege": {
+                "adresse": siege.get("adresse"),
+                "code_postal": siege.get("code_postal"),
+                "ville": siege.get("ville"),
+                "departement": siege.get("departement"),
+            },
+            "chiffre_affaires": ca,
+            "chiffre_affaires_fmt": f"{ca/1e6:.1f}M EUR" if ca and ca > 0 else "N/A",
+            "statut_activite": group_info["statut_activite"],
+            "date_cessation": group_info["date_cessation"],
+            "procedure_collective_en_cours": data.get("procedure_collective_en_cours", False),
+            "groupe": {
+                "is_group": group_info["is_group"],
+                "is_holding": group_info["is_holding"],
+                "societe_mere": group_info["parent"],
+                "entreprises_liees": group_info["entreprises_liees"],
+                "nb_etablissements": group_info["nb_etablissements"],
+                "etablissements_secondaires": group_info["secondary_sites"],
+            },
+        },
+    }
+
+
+@app.get("/api/pappers/statut/{siren}")
+async def get_company_statut(siren: str):
+    """
+    Verifie rapidement le statut d'activite d'une entreprise (active ou radiee)
+    et son appartenance eventuelle a un groupe ou holding.
+    """
+    siren = siren.strip().replace(" ", "")
+    if not siren.isdigit() or len(siren) != 9:
+        raise HTTPException(status_code=400, detail="SIREN invalide — doit contenir 9 chiffres")
+
+    data = await get_pappers_company(siren)
+    if not data or not isinstance(data, dict) or "raw" in data:
+        raise HTTPException(status_code=404, detail=f"Entreprise SIREN {siren} non trouvee via Pappers")
+
+    group_info = _extract_group_info(data)
+
+    return {
+        "source": "pappers-mcp",
+        "siren": siren,
+        "nom_entreprise": data.get("nom_entreprise"),
+        "statut_activite": group_info["statut_activite"],
+        "date_cessation": group_info["date_cessation"],
+        "is_group": group_info["is_group"],
+        "is_holding": group_info["is_holding"],
+        "societe_mere": group_info["parent"],
+        "nb_etablissements": group_info["nb_etablissements"],
+    }
+
+
+@app.get("/api/pappers/bodacc/{siren}")
+async def get_bodacc_endpoint(siren: str):
+    """
+    Publications BODACC d'une entreprise via Pappers MCP.
+    Champ reel : publications_bodacc dans informations-entreprise.
+    Structure : {type, date, description, administration, bodacc, numero_annonce}
+    Types BODACC : Modification, Immatriculation, Vente, Radiation, Depot des comptes...
+    """
+    siren = _validate_siren(siren)
+    data = await get_pappers_bodacc(siren)
+    if not data:
+        raise HTTPException(status_code=404, detail=f"Entreprise SIREN {siren} non trouvee")
+
+    publications = data.get("publications_bodacc") or []
+    if not isinstance(publications, list):
+        publications = []
+
+    # Classification basee sur le champ "type" reel de Pappers BODACC
+    cessions, capital_changes, dissolutions, transferts, procedures, autres = [], [], [], [], [], []
+    for pub in publications:
+        type_pub = (pub.get("type") or "").lower()
+        desc = (pub.get("description") or "").lower()
+        admin = (pub.get("administration") or "").lower()
+        combined = f"{type_pub} {desc} {admin}"
+        entry = {
+            "date": pub.get("date"),
+            "type": pub.get("type") or "Autre",
+            "numero_annonce": pub.get("numero_annonce"),
+            "bodacc": pub.get("bodacc"),
+            "description": pub.get("description") or pub.get("administration") or "",
+            "greffe": pub.get("greffe"),
+        }
+        if any(w in combined for w in ["vente", "cession", "cession de fonds"]):
+            cessions.append(entry)
+        elif any(w in combined for w in ["capital", "augmentation", "reduction de capital"]):
+            capital_changes.append(entry)
+        elif any(w in combined for w in ["dissolution", "liquidation", "radiation"]):
+            dissolutions.append(entry)
+        elif any(w in combined for w in ["transfert", "siege", "adresse"]):
+            transferts.append(entry)
+        elif any(w in combined for w in ["redressement", "procedure collective", "sauvegarde", "jugement"]):
+            procedures.append(entry)
+        else:
+            autres.append(entry)
+
+    # Signaux M&A detectes
+    signaux_detectes = []
+    if cessions:
+        signaux_detectes.append({"signal": "bodacc_cession", "label": "Cession de fonds / parts", "count": len(cessions)})
+    if capital_changes:
+        signaux_detectes.append({"signal": "bodacc_capital_change", "label": "Modification de capital", "count": len(capital_changes)})
+    if dissolutions:
+        signaux_detectes.append({"signal": "bodacc_dissolution", "label": "Dissolution / Radiation", "count": len(dissolutions)})
+    if transferts:
+        signaux_detectes.append({"signal": "hq_relocation", "label": "Transfert de siege", "count": len(transferts)})
+    if procedures:
+        signaux_detectes.append({"signal": "procedure_collective", "label": "Procedure collective", "count": len(procedures)})
+
+    return {
+        "source": "pappers-mcp",
+        "siren": siren,
+        "nom_entreprise": data.get("nom_entreprise"),
+        "statut_activite": "Radie" if data.get("entreprise_cessee") else "En activite",
+        "procedure_collective_en_cours": data.get("procedure_collective_en_cours", False),
+        "total_publications": len(publications),
+        "signaux_ma": signaux_detectes,
+        "cessions": cessions,
+        "modifications_capital": capital_changes,
+        "dissolutions": dissolutions,
+        "transferts_siege": transferts,
+        "procedures_bodacc": procedures,
+        "autres": autres,
+    }
+
+
+@app.get("/api/pappers/dirigeant/search")
+async def search_dirigeant_endpoint(
+    q: str = Query(..., description="Nom et/ou prenom du dirigeant (ex: 'Dupont Jean')"),
+    code_naf: Optional[str] = Query(None, description="Filtrer par code NAF"),
+    departement: Optional[str] = Query(None, description="Filtrer par departement"),
+):
+    """
+    Recherche toutes les entreprises ou une personne est ou a ete dirigeante.
+    Utilise l'outil Pappers MCP reel : recherche-dirigeants (parametre q).
+    Utile pour identifier les serial entrepreneurs et cartographier les reseaux.
+    """
+    if not q or len(q.strip()) < 2:
+        raise HTTPException(status_code=400, detail="Le parametre q doit contenir au moins 2 caracteres")
+
+    data = await search_dirigeant_by_name(q.strip())
+    if not data:
+        raise HTTPException(status_code=404, detail=f"Aucun dirigeant trouve pour '{q}'")
+
+    # Structure reelle Pappers recherche-dirigeants :
+    # { "resultats": [ { "entreprises": [ { "siren":..., "nom_entreprise":...,
+    #   "dirigeant": { "qualites":[...], "date_prise_de_poste":..., "actuel": bool } } ] } ],
+    #   "total": N }
+    # Chaque item de resultats = une personne, ses entreprises sont dans "entreprises"
+    resultats = data.get("resultats") or []
+    if not isinstance(resultats, list):
+        resultats = []
+
+    results = []
+    for item in resultats[:50]:
+        entreprises_raw = item.get("entreprises") or []
+
+        # Construire la liste des mandats
+        mandats = []
+        for e in entreprises_raw[:15]:
+            dir_info = e.get("dirigeant") or {}
+            qualites = dir_info.get("qualites") or []
+            mandats.append({
+                "siren": e.get("siren"),
+                "nom_entreprise": e.get("nom_entreprise") or e.get("denomination"),
+                "code_naf": e.get("code_naf"),
+                "libelle_naf": e.get("libelle_code_naf") or e.get("domaine_activite"),
+                "ville": (e.get("siege") or {}).get("ville"),
+                "qualite": ", ".join(qualites) if qualites else e.get("qualite"),
+                "date_prise_de_poste": dir_info.get("date_prise_de_poste"),
+                "en_fonction": dir_info.get("actuel", True),
+                "statut_entreprise": "Radie" if e.get("entreprise_cessee") else "En activite",
+            })
+
+        # Infos personne : parfois dans le premier item, parfois absentes du MCP
+        first = entreprises_raw[0] if entreprises_raw else {}
+        dir0 = first.get("dirigeant") or {}
+
+        results.append({
+            "nb_mandats": len(entreprises_raw),
+            "mandats_actifs": sum(1 for m in mandats if m["en_fonction"]),
+            "mandats": mandats,
+            "signal_multi_mandats": len(entreprises_raw) >= 2,
+            # Info personne recuperee si disponible
+            "date_premiere_prise_de_poste": dir0.get("date_premiere_prise_de_poste"),
+        })
+
+    return {
+        "source": "pappers-mcp",
+        "query": q,
+        "total": data.get("total", len(results)),
+        "nb_resultats": len(results),
+        "data": results,
+    }
+
+
+@app.get("/api/pappers/procedures/{siren}")
+async def get_procedures_endpoint(siren: str):
+    """
+    Procedures collectives d'une entreprise (redressement judiciaire, liquidation).
+    Inclut aussi le score de risque Pappers et le statut d'activite.
+    """
+    siren = _validate_siren(siren)
+    data = await get_pappers_procedures(siren)
+    if not data or not isinstance(data, dict) or "raw" in data:
+        raise HTTPException(status_code=404, detail=f"Entreprise SIREN {siren} non trouvee")
+
+    procedures = data.get("procedures_collectives") or []
+    if not isinstance(procedures, list):
+        procedures = []
+
+    cessee = data.get("entreprise_cessee", False)
+    scoring_fi = data.get("scoring_financier")
+    score_risque = None
+    if isinstance(scoring_fi, dict):
+        score_risque = scoring_fi.get("score")
+    elif isinstance(scoring_fi, (int, float)):
+        score_risque = scoring_fi
+
+    niveau_risque = "Inconnu"
+    if score_risque is not None:
+        try:
+            s = float(score_risque)
+            if s >= 8:
+                niveau_risque = "Tres eleve"
+            elif s >= 6:
+                niveau_risque = "Eleve"
+            elif s >= 4:
+                niveau_risque = "Modere"
+            else:
+                niveau_risque = "Faible"
+        except (TypeError, ValueError):
+            pass
+
+    return {
+        "source": "pappers-mcp",
+        "siren": siren,
+        "nom_entreprise": data.get("nom_entreprise"),
+        "statut_activite": "Radie" if cessee else "En activite",
+        "date_cessation": data.get("date_cessation"),
+        "procedures_collectives": [
+            {
+                "type": p.get("type") or p.get("famille"),
+                "date_jugement": p.get("date_jugement") or p.get("date"),
+                "tribunal": p.get("tribunal"),
+                "statut": p.get("statut") or p.get("etat"),
+            }
+            for p in procedures
+        ],
+        "en_procedure": len(procedures) > 0,
+        "score_risque_pappers": score_risque,
+        "niveau_risque": niveau_risque,
+        "signal_ma": "procedure_collective" if procedures else None,
+    }
+
+
+@app.get("/api/pappers/concurrents/{siren}")
+async def get_concurrents_endpoint(
+    siren: str,
+    ca_min: int = Query(0, description="CA minimum en euros (ex: 1000000 pour 1M)"),
+    inclure_meme_departement: bool = Query(True, description="Restreindre au meme departement"),
+):
+    """
+    Genere automatiquement une liste de concurrents pour une cible donnee.
+    Recherche les entreprises actives avec le meme code NAF dans la meme region.
+    Utile pour la consolidation sectorielle et l'identification de roll-up.
+    """
+    siren = _validate_siren(siren)
+
+    # Recuperer les infos de la cible
+    target_data = await get_pappers_company(siren)
+    if not target_data or not isinstance(target_data, dict) or "raw" in target_data:
+        raise HTTPException(status_code=404, detail=f"Entreprise SIREN {siren} non trouvee")
+
+    code_naf = target_data.get("code_naf") or ""
+    nom_entreprise = target_data.get("nom_entreprise") or ""
+    siege = target_data.get("siege") or {}
+    departement = siege.get("departement") or siege.get("code_postal", "")[:2] if siege.get("code_postal") else ""
+
+    if not code_naf:
+        raise HTTPException(status_code=400, detail="Code NAF introuvable pour cette entreprise")
+
+    dep_query = departement if inclure_meme_departement else ""
+    result = await get_pappers_concurrents(code_naf, dep_query, ca_min)
+
+    if not result or not isinstance(result, dict):
+        return {"data": [], "total": 0, "message": "Aucun concurrent trouve"}
+
+    resultats = result.get("resultats") or []
+    concurrents = []
+    for r in resultats:
+        if r.get("siren") == siren:
+            continue  # Exclure la cible elle-meme
+        siege_c = r.get("siege") or {}
+        ca = r.get("chiffre_affaires")
+        concurrents.append({
+            "siren": r.get("siren"),
+            "name": r.get("nom_entreprise"),
+            "ville": siege_c.get("ville"),
+            "departement": siege_c.get("departement"),
+            "effectif": r.get("effectif"),
+            "chiffre_affaires": ca,
+            "chiffre_affaires_fmt": f"{ca/1e6:.1f}M EUR" if ca and ca > 0 else "N/A",
+            "forme_juridique": r.get("forme_juridique"),
+            "date_creation": r.get("date_creation"),
+        })
+
+    return {
+        "source": "pappers-mcp",
+        "cible": {
+            "siren": siren,
+            "nom": nom_entreprise,
+            "code_naf": code_naf,
+            "libelle_naf": target_data.get("libelle_code_naf"),
+            "departement": departement,
+        },
+        "total_concurrents": result.get("total", len(concurrents)),
+        "filtres": {
+            "code_naf": code_naf,
+            "departement": dep_query or "tous",
+            "ca_min": ca_min,
+        },
+        "data": concurrents,
+    }
+
+
+@app.get("/api/pappers/score/{siren}")
+async def get_score_defaillance_endpoint(siren: str, annee: Optional[str] = Query(None)):
+    """
+    Score de defaillance et indicateurs financiers Pappers pour une entreprise.
+    Utilise scoring_non_financier (seul score dispo dans le MCP Pappers) +
+    comptes-entreprise pour le detail des liasses comptables.
+    """
+    siren = _validate_siren(siren)
+
+    # Appels paralleles : infos generales + comptes detailles (comptes peut timeout)
+    results = await asyncio.gather(
+        get_pappers_company(siren),
+        get_comptes(siren, annee or ""),
+        return_exceptions=True,
+    )
+    data = results[0] if not isinstance(results[0], Exception) else None
+    comptes_data = results[1] if not isinstance(results[1], Exception) else None
+
+    if not data or not isinstance(data, dict) or "raw" in data:
+        raise HTTPException(status_code=404, detail=f"Entreprise SIREN {siren} non trouvee")
+
+    scoring_nfi = data.get("scoring_non_financier") or {}
+    finances = data.get("finances") or []
+
+    # Score non-financier Pappers (seul disponible via MCP)
+    score_nfi_val = None
+    if isinstance(scoring_nfi, dict):
+        score_nfi_val = scoring_nfi.get("score")
+    elif isinstance(scoring_nfi, (int, float)):
+        score_nfi_val = scoring_nfi
+
+    # Niveau de risque EdRCF base sur score_non_financier
+    niveau_risque = "Inconnu"
+    if score_nfi_val is not None:
+        try:
+            s = float(score_nfi_val)
+            if s >= 8:
+                niveau_risque = "Tres eleve — distressed M&A possible"
+            elif s >= 6:
+                niveau_risque = "Eleve — surveillance renforcee"
+            elif s >= 4:
+                niveau_risque = "Modere — monitoring standard"
+            else:
+                niveau_risque = "Faible — cible saine"
+        except (TypeError, ValueError):
+            pass
+
+    # Synthese financiere via finances (3 derniers exercices)
+    synthese_finances = []
+    for f in finances[:3]:
+        annee_f = f.get("annee") or str(f.get("date_cloture_exercice", ""))[:4]
+        ca = f.get("chiffre_affaires")
+        synthese_finances.append({
+            "annee": annee_f,
+            "chiffre_affaires": ca,
+            "chiffre_affaires_fmt": f"{ca/1e6:.1f}M EUR" if ca and ca > 0 else "N/A",
+            "resultat": f.get("resultat"),
+            "effectif": f.get("effectif"),
+        })
+
+    # Comptes detailles (liasses) depuis comptes-entreprise
+    comptes_resume = {}
+    if comptes_data and isinstance(comptes_data, dict):
+        for annee_key, exercices in comptes_data.items():
+            if isinstance(exercices, list) and exercices:
+                ex = exercices[0]
+                comptes_resume[annee_key] = {
+                    "date_depot": ex.get("date_depot"),
+                    "date_cloture": ex.get("date_cloture"),
+                    "type_comptes": ex.get("libelle_type_comptes"),
+                    "devise": ex.get("devise"),
+                    "nb_sections": len(ex.get("sections") or []),
+                }
+
+    return {
+        "source": "pappers-mcp",
+        "siren": siren,
+        "nom_entreprise": data.get("nom_entreprise"),
+        "statut_activite": "Radie" if data.get("entreprise_cessee") else "En activite",
+        "procedure_collective_en_cours": data.get("procedure_collective_en_cours", False),
+        "scoring": {
+            "score_non_financier": score_nfi_val,
+            "detail_non_financier": scoring_nfi if isinstance(scoring_nfi, dict) else {},
+            "niveau_risque_edrcf": niveau_risque,
+            "note": "Seul le scoring non-financier est disponible via MCP Pappers",
+        },
+        "synthese_financiere": synthese_finances,
+        "comptes_annuels": comptes_resume,
+        "procedures_collectives": data.get("procedures_collectives") or [],
+    }
 
 
 @app.get("/api/targets/{target_id}")

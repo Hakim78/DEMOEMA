@@ -176,6 +176,68 @@ SIGNAL_CATALOG = {
         "severity": "low",
         "family": "Patrimoine & Transmission",
     },
+
+    # --- Signaux BODACC (HIGH) ---
+    "bodacc_cession": {
+        "label": "Publication BODACC : cession de fonds / parts",
+        "source": "BODACC",
+        "source_url": "https://www.bodacc.fr",
+        "dimension": "signaux_patrimoniaux",
+        "points": 22,
+        "severity": "high",
+        "family": "Patrimoine & Transmission",
+    },
+    "bodacc_capital_change": {
+        "label": "Publication BODACC : modification de capital",
+        "source": "BODACC",
+        "source_url": "https://www.bodacc.fr",
+        "dimension": "signaux_patrimoniaux",
+        "points": 15,
+        "severity": "high",
+        "family": "Patrimoine & Transmission",
+    },
+    "bodacc_dissolution": {
+        "label": "Publication BODACC : dissolution / liquidation",
+        "source": "BODACC",
+        "source_url": "https://www.bodacc.fr",
+        "dimension": "maturite_dirigeant",
+        "points": 18,
+        "severity": "high",
+        "family": "Maturite Dirigeant",
+    },
+
+    # --- Procédures collectives (HIGH) ---
+    "procedure_collective": {
+        "label": "Procedure collective en cours (redressement / liquidation)",
+        "source": "Pappers / BODACC",
+        "source_url": "https://www.pappers.fr",
+        "dimension": "signaux_patrimoniaux",
+        "points": 20,
+        "severity": "high",
+        "family": "Patrimoine & Transmission",
+    },
+
+    # --- Score Pappers défaillance (MEDIUM) ---
+    "score_pappers_risque": {
+        "label": "Score de risque Pappers eleve (defaillance probable)",
+        "source": "Pappers",
+        "source_url": "https://www.pappers.fr",
+        "dimension": "dynamique_financiere",
+        "points": 10,
+        "severity": "medium",
+        "family": "Dynamique Financiere",
+    },
+
+    # --- Dirigeant multi-mandats (MEDIUM) ---
+    "dirigeant_multi_mandats": {
+        "label": "Dirigeant avec mandats dans plusieurs societes",
+        "source": "Pappers",
+        "source_url": "https://www.pappers.fr",
+        "dimension": "maturite_dirigeant",
+        "points": 8,
+        "severity": "medium",
+        "family": "Maturite Dirigeant",
+    },
 }
 
 
