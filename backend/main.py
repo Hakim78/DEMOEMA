@@ -1915,7 +1915,7 @@ async def copilot_query(q: str = Query(...)):
 
 @app.get("/api/graph")
 def get_graph():
-    """Network graph data with EDR team, targets, and advisors"""
+    """Network graph data with EDR team, targets, advisors, and subsidiaries"""
     nodes = [
         {
             "id": "edr-1",
@@ -1923,6 +1923,9 @@ def get_graph():
             "type": "internal",
             "role": "Analyste Senior, EDR CF",
             "color": "#6366f1",
+            "signals_count": 0,
+            "signals": [],
+            "is_holding": False,
         },
         {
             "id": "edr-2",
@@ -1930,6 +1933,9 @@ def get_graph():
             "type": "internal",
             "role": "Directrice, EDR CF",
             "color": "#6366f1",
+            "signals_count": 0,
+            "signals": [],
+            "is_holding": False,
         },
         {
             "id": "edr-3",
@@ -1937,6 +1943,9 @@ def get_graph():
             "type": "internal",
             "role": "Banquier Prive, EDR",
             "color": "#6366f1",
+            "signals_count": 0,
+            "signals": [],
+            "is_holding": False,
         },
     ]
     links = []
@@ -1945,6 +1954,18 @@ def get_graph():
     top_targets = sorted(enriched_targets, key=lambda x: x["globalScore"], reverse=True)[:8]
     for t in top_targets:
         main_dirigeant = t["dirigeants"][0] if t["dirigeants"] else {"name": t["name"], "role": "Dirigeant"}
+
+        # Signals from scoring engine
+        top_signals = t.get("topSignals", [])
+        signals_count = len(top_signals)
+        signals_labels = [s.get("label", s.get("id", "")) for s in top_signals[:5]]
+
+        # Group/holding detection — support both Pappers build_target and demo_data fallback
+        groupe = t.get("groupe") or {}
+        group = t.get("group") or {}
+        is_holding = groupe.get("is_holding") or groupe.get("is_group") or group.get("is_group") or False
+        entreprises_liees = groupe.get("entreprises_liees") or group.get("subsidiaries") or []
+
         nodes.append(
             {
                 "id": t["id"],
@@ -1954,8 +1975,34 @@ def get_graph():
                 "color": "#10b981",
                 "company": t["name"],
                 "score": t["globalScore"],
+                "signals_count": signals_count,
+                "signals": signals_labels,
+                "is_holding": is_holding,
             }
         )
+
+        # Subsidiary nodes — up to 3 per target
+        for i, sub in enumerate(entreprises_liees[:3]):
+            sub_name = sub.get("denomination") or sub.get("name") or f"Filiale {i+1}"
+            sub_id = f"{t['id']}-sub-{i}"
+            nodes.append({
+                "id": sub_id,
+                "name": sub_name,
+                "type": "subsidiary",
+                "role": f"Filiale de {t['name']}",
+                "color": "#8b5cf6",
+                "company": t["name"],
+                "score": None,
+                "signals_count": 0,
+                "signals": [],
+                "is_holding": False,
+            })
+            links.append({
+                "source": t["id"],
+                "target": sub_id,
+                "label": "Filiale",
+                "value": 1,
+            })
 
         # Create relationship links based on edr_banker
         if t["relationship"]["edr_banker"]:
@@ -1993,6 +2040,9 @@ def get_graph():
             "type": "advisor",
             "role": "Partner, Rothschild & Co",
             "color": "#f59e0b",
+            "signals_count": 0,
+            "signals": [],
+            "is_holding": False,
         },
         {
             "id": "adv-2",
@@ -2000,6 +2050,9 @@ def get_graph():
             "type": "advisor",
             "role": "Associee, Darrois Villey",
             "color": "#f59e0b",
+            "signals_count": 0,
+            "signals": [],
+            "is_holding": False,
         },
         {
             "id": "adv-3",
@@ -2007,6 +2060,9 @@ def get_graph():
             "type": "advisor",
             "role": "Partner, PwC Advisory",
             "color": "#f59e0b",
+            "signals_count": 0,
+            "signals": [],
+            "is_holding": False,
         },
         {
             "id": "adv-4",
@@ -2014,6 +2070,9 @@ def get_graph():
             "type": "advisor",
             "role": "Directrice, InfraVia Capital",
             "color": "#f59e0b",
+            "signals_count": 0,
+            "signals": [],
+            "is_holding": False,
         },
         {
             "id": "adv-5",
@@ -2021,6 +2080,9 @@ def get_graph():
             "type": "advisor",
             "role": "Partner, Eurazeo",
             "color": "#f59e0b",
+            "signals_count": 0,
+            "signals": [],
+            "is_holding": False,
         },
     ]
     nodes.extend(advisors)
