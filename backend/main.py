@@ -202,7 +202,7 @@ async def search_pappers(query: str = "", par_page: str = "10", **filters):
     """Search companies via Pappers MCP with structured filters. Max 10 results."""
     args = {
         "par_page": par_page,
-        "entreprise_cessee": "false",
+        "entreprise_cessee": False,
         "return_fields": ["siren", "nom_entreprise", "siege", "date_creation",
                           "code_naf", "libelle_code_naf", "effectif",
                           "forme_juridique", "capital", "chiffre_affaires", "resultat"],
@@ -1533,6 +1533,105 @@ async def copilot_query(q: str = Query(...)):
 
         except Exception as e:
             print(f"[Copilot] Pappers enrichment error: {e}")
+
+    # --- Direct SIREN lookup (9-digit number detected in query) ---
+    siren_match = re.search(r'\b(\d{9})\b', q)
+    if siren_match and PAPPERS_MCP_URL:
+        siren_val = siren_match.group(1)
+        try:
+            data = await get_pappers_company(siren_val)
+            if data and isinstance(data, dict) and "raw" not in data and data.get("nom_entreprise"):
+                nom = data.get("nom_entreprise", "Entreprise inconnue")
+                siege = data.get("siege") or {}
+                ville = siege.get("ville", "")
+                dept = siege.get("departement", "")
+                naf = data.get("libelle_code_naf", "")
+                ca = data.get("chiffre_affaires")
+                ca_str = f"{ca/1e6:.1f}M EUR" if ca and ca > 0 else "N/A"
+                effectif = data.get("effectif", "N/A")
+                cessee = data.get("entreprise_cessee", False)
+                statut = "Radiee" if cessee else "Active"
+                date_cess = data.get("date_cessation", "")
+                reps = data.get("representants") or []
+                rep_lines = "\n".join([
+                    f"  - {(r.get('prenom') or '')} {(r.get('nom') or '')} — {r.get('qualite', '')}"
+                    for r in reps[:3]
+                ])
+                date_crea = data.get("date_creation", "")
+                forme = data.get("forme_juridique", "")
+                capital = data.get("capital")
+                capital_str = f"{capital/1000:.0f}k EUR" if capital else "N/A"
+                resp_lines = [
+                    f"**{nom}** — SIREN {siren_val}\n",
+                    f"- **Statut** : {statut}" + (f" ({date_cess})" if date_cess else ""),
+                    f"- **Siège** : {ville}{', ' + dept if dept else ''}",
+                    f"- **Activité** : {naf}",
+                    f"- **Forme juridique** : {forme}",
+                    f"- **Création** : {date_crea}",
+                    f"- **CA** : {ca_str}  |  **Effectif** : {effectif}  |  **Capital** : {capital_str}",
+                    "",
+                    "**Dirigeants :**",
+                    rep_lines if rep_lines else "  N/A",
+                    "",
+                    "*Source : Pappers MCP — données open data*",
+                ]
+                return {
+                    "response": "\n".join(resp_lines),
+                    "source": "pappers-mcp",
+                    "targets_updated": False,
+                }
+            else:
+                return {
+                    "response": f"Aucune entreprise trouvée pour le SIREN **{siren_val}** dans la base Pappers.",
+                    "source": "pappers-mcp",
+                    "targets_updated": False,
+                }
+        except Exception as e:
+            print(f"[Copilot] SIREN lookup error: {e}")
+
+    # --- Direct company name search (short query, no trigger keywords, likely a company name) ---
+    is_company_name_search = (
+        not wants_pappers
+        and not siren_match
+        and len(ql.strip()) >= 2
+        and len(ql.split()) <= 5
+        and PAPPERS_MCP_URL
+    )
+    if is_company_name_search:
+        try:
+            pappers_result = await search_pappers(q)
+            if isinstance(pappers_result, dict) and pappers_result.get("resultats"):
+                resultats = pappers_result["resultats"][:5]
+                total = pappers_result.get("total", len(resultats))
+                lines = [f"**Recherche Pappers pour \"{q}\" — {total} résultat(s) :**\n"]
+                for r in resultats:
+                    nom = r.get("nom_entreprise", "N/A")
+                    siren_r = r.get("siren", "")
+                    siege_r = r.get("siege") or {}
+                    ville_r = siege_r.get("ville", "")
+                    naf_r = r.get("libelle_code_naf", "")
+                    ca_r = r.get("chiffre_affaires")
+                    ca_str_r = f"{ca_r/1e6:.1f}M" if ca_r and ca_r > 0 else "N/A"
+                    eff_r = r.get("effectif", "")
+                    reps_r = r.get("representants") or []
+                    lines.append(f"**{nom}** (SIREN : {siren_r})")
+                    if ville_r:
+                        lines.append(f"  Siège : {ville_r}")
+                    if naf_r:
+                        lines.append(f"  Activité : {naf_r}")
+                    if ca_str_r != "N/A":
+                        lines.append(f"  CA : {ca_str_r}  |  Effectif : {eff_r or 'N/A'}")
+                    for rep in reps_r[:1]:
+                        lines.append(f"  Dirigeant : {(rep.get('prenom') or '')} {(rep.get('nom') or '')} — {rep.get('qualite', '')}")
+                    lines.append("")
+                lines.append("*Source : Pappers MCP — données open data*")
+                return {
+                    "response": "\n".join(lines),
+                    "source": "pappers-mcp",
+                    "targets_updated": False,
+                }
+        except Exception as e:
+            print(f"[Copilot] Company name search error: {e}")
 
     full_context = context + pappers_context
 
