@@ -168,7 +168,7 @@ export default function TargetDetail() {
                   {targetData.sector} &bull; EDRCF 6.0
                </div>
                <p className="text-gray-500 text-[10px] sm:text-xs font-black uppercase tracking-[0.2em]">
-                  ID: <span className="text-gray-300">{targetData.id.toUpperCase()}</span> &bull; Fenetre: <span className="text-white">{targetData.analysis.window}</span>
+                  ID: <span className="text-gray-300">{targetData.id.toUpperCase()}</span> &bull; Fenetre: <span className="text-white">{targetData.analysis?.window ?? "N/A"}</span>
                </p>
             </div>
           </div>
@@ -426,10 +426,10 @@ export default function TargetDetail() {
               <div className="space-y-12 relative z-10">
                  <div>
                     <div className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.3em] mb-4">Angle Technique Probable</div>
-                    <div className="text-4xl font-black text-white tracking-tighter uppercase italic leading-tight">{targetData.analysis.type}</div>
+                    <div className="text-4xl font-black text-white tracking-tighter uppercase italic leading-tight">{targetData.analysis?.type ?? "—"}</div>
                  </div>
                  <p className="text-xl font-medium leading-relaxed text-gray-300 border-l border-indigo-500/30 pl-8">
-                   &laquo;{targetData.analysis.narrative}&raquo;
+                   &laquo;{targetData.analysis?.narrative ?? "Analyse en cours."}&raquo;
                  </p>
               </div>
            </section>
@@ -441,7 +441,7 @@ export default function TargetDetail() {
                     <Radio size={16} /> 02. Indicateurs de Conviction
                  </h2>
                  <div className="space-y-4">
-                    {targetData.topSignals.map((signal, i) => (
+                    {(targetData.topSignals ?? []).map((signal, i) => (
                       <div key={i} className="p-6 rounded-3xl bg-white/[0.03] border border-white/5 hover:border-indigo-500/20 transition-all group/signal">
                          <div className="flex items-center justify-between mb-2">
                            <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest group-hover/signal:text-indigo-400 transition-colors">
@@ -500,19 +500,19 @@ export default function TargetDetail() {
                  <div className="space-y-8 relative z-10">
                     <div>
                        <div className="text-[9px] font-black text-indigo-200 uppercase tracking-widest mb-2 opacity-60">Angle d&apos;Approche</div>
-                       <div className="text-sm font-bold leading-relaxed">{targetData.activation.approach}</div>
+                       <div className="text-sm font-bold leading-relaxed">{targetData.activation?.approach ?? "À définir"}</div>
                     </div>
                     <div>
                        <div className="text-[9px] font-black text-indigo-200 uppercase tracking-widest mb-2 opacity-60">Decideurs Cles</div>
                        <div className="flex flex-wrap gap-2">
-                          {targetData.activation.deciders.map((d, i) => (
+                          {(targetData.activation?.deciders ?? []).map((d, i) => (
                             <span key={i} className="px-3 py-1 bg-black/20 rounded-xl text-[10px] font-black uppercase">{d}</span>
                           ))}
                        </div>
                     </div>
                     <div>
                         <div className="text-[9px] font-black text-indigo-200 uppercase tracking-widest mb-2 opacity-60">Motif Objectif</div>
-                        <div className="text-sm font-bold leading-relaxed">{targetData.activation.reason}</div>
+                        <div className="text-sm font-bold leading-relaxed">{targetData.activation?.reason ?? "À qualifier"}</div>
                     </div>
                  </div>
               </section>
@@ -524,7 +524,7 @@ export default function TargetDetail() {
                  <div>
                     <div className="text-[10px] font-black text-gray-600 uppercase tracking-widest mb-2">Protocole de Vigilance</div>
                     <div className="flex items-center gap-3 px-4 py-2 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-500 text-[10px] font-black uppercase">
-                       <AlertTriangle size={14} /> {targetData.risks.falsePositive} FPR
+                       <AlertTriangle size={14} /> {targetData.risks?.falsePositive ?? "N/A"} FPR
                     </div>
                  </div>
               </div>

@@ -1220,44 +1220,6 @@ def get_pipeline():
         elif t["globalScore"] >= 45:
             pipeline[0]["cards"].append(card)  # Origination
 
-    # Add demo cards in later stages for visual effect
-    pipeline[2]["cards"].append(
-        {
-            "id": "demo-pitch-1",
-            "name": "Courtage Prestige Assurances",
-            "sector": "Courtage d'assurance",
-            "score": 82,
-            "priority": "Action Prioritaire",
-            "tags": ["Transmission / LBO"],
-            "window": "3-6 mois",
-            "ebitda": "5.9M EUR",
-        }
-    )
-    pipeline[3]["cards"].append(
-        {
-            "id": "demo-exec-1",
-            "name": "TechParts International",
-            "sector": "Industrial Tech / TIC",
-            "score": 78,
-            "priority": "Action Prioritaire",
-            "tags": ["Mandat signe"],
-            "window": "En cours",
-            "ebitda": "15.2M EUR",
-        }
-    )
-    pipeline[4]["cards"].append(
-        {
-            "id": "demo-closing-1",
-            "name": "LogiNord Express",
-            "sector": "Logistique / Transport",
-            "score": 91,
-            "priority": "Closing",
-            "tags": ["Offre ferme"],
-            "window": "Closing Q2 2026",
-            "ebitda": "9.8M EUR",
-        }
-    )
-
     return {"data": pipeline}
 
 
