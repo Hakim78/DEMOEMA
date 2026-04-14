@@ -138,7 +138,7 @@ export default function ReportPage() {
                     </div>
                     <div>
                        <div className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5">M&A Window</div>
-                       <div className="text-sm font-black uppercase italic">{target.analysis.window}</div>
+                       <div className="text-sm font-black uppercase italic">{target.analysis?.window ?? "N/A"}</div>
                     </div>
                  </div>
                  <div className="grid grid-cols-2 gap-8 pt-4 border-t border-gray-100">
@@ -157,7 +157,7 @@ export default function ReportPage() {
               <div className="p-8 bg-gray-50 rounded-[2rem] border border-gray-100">
                   <div className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-6 border-b border-gray-200 pb-2">Convergence Signal Cluster</div>
                   <div className="space-y-4">
-                     {target.topSignals.map((s, i) => (
+                     {(target.topSignals ?? []).map((s, i) => (
                        <div key={i} className="flex items-center gap-3">
                           <div className="w-2 h-2 rounded-full bg-black shrink-0 shadow-xl" />
                           <div className="flex flex-col">
@@ -180,10 +180,10 @@ export default function ReportPage() {
            <div className="space-y-8 relative z-10">
               <div>
                  <div className="text-[9px] font-black text-indigo-400 uppercase tracking-widest mb-2">Deal Type Identification</div>
-                 <div className="text-2xl font-black italic">{target.analysis.type}</div>
+                 <div className="text-2xl font-black italic">{target.analysis?.type ?? "—"}</div>
               </div>
               <p className="text-xl font-bold leading-relaxed text-gray-200 border-l border-indigo-500/40 pl-8 italic">
-                "{target.analysis.narrative}"
+                "{target.analysis?.narrative ?? "Analyse en cours."}"
               </p>
            </div>
         </section>
@@ -198,7 +198,7 @@ export default function ReportPage() {
                  <div>
                     <div className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-3">Priority Deciders</div>
                     <div className="flex flex-wrap gap-2">
-                       {target.activation.deciders.map((d, i) => (
+                       {(target.activation?.deciders ?? []).map((d, i) => (
                          <span key={i} className="px-3 py-1 bg-gray-100 rounded-lg text-[10px] font-black uppercase">{d}</span>
                        ))}
                     </div>
@@ -215,7 +215,7 @@ export default function ReportPage() {
                  </div>
                  <div>
                     <div className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2">Engagement Angle</div>
-                    <div className="text-sm font-bold leading-relaxed italic">"{target.activation.approach}"</div>
+                    <div className="text-sm font-bold leading-relaxed italic">"{target.activation?.approach ?? "À définir"}"</div>
                  </div>
               </div>
            </div>
@@ -227,12 +227,12 @@ export default function ReportPage() {
               <div className="space-y-8">
                  <div>
                     <div className="text-[9px] font-black text-rose-500/60 uppercase tracking-widest mb-2 uppercase">False Positive Probability</div>
-                    <div className="text-3xl font-black text-rose-600 tracking-tighter">{target.risks.falsePositive}</div>
+                    <div className="text-3xl font-black text-rose-600 tracking-tighter">{target.risks?.falsePositive ?? "N/A"}</div>
                  </div>
                  <div>
                     <div className="text-[9px] font-black text-rose-500/60 uppercase tracking-widest mb-2">Uncertainty Vectors</div>
                     <p className="text-xs font-bold leading-relaxed text-gray-600">
-                       {target.risks.uncertainties}
+                       {target.risks?.uncertainties ?? "Non évalué"}
                     </p>
                  </div>
               </div>
