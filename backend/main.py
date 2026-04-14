@@ -1606,14 +1606,69 @@ async def copilot_query(q: str = Query(...)):
     pappers_filters = {}
     targets_updated = False
 
-    # Broad intent detection — trigger Pappers for any company/sector query
+    # --- SIREN lookup FIRST (before anything else) ---
+    siren_match = re.search(r'\b(\d{9})\b', q)
+    if siren_match and PAPPERS_MCP_URL:
+        siren_val = siren_match.group(1)
+        try:
+            data = await get_pappers_company(siren_val)
+            if data and isinstance(data, dict) and "raw" not in data and data.get("nom_entreprise"):
+                nom = data.get("nom_entreprise", "Entreprise inconnue")
+                siege = data.get("siege") or {}
+                ville = siege.get("ville", "")
+                dept = siege.get("departement", "")
+                naf = data.get("libelle_code_naf", "")
+                ca = data.get("chiffre_affaires")
+                ca_str = f"{ca/1e6:.1f}M EUR" if ca and ca > 0 else "N/A"
+                effectif = data.get("effectif", "N/A")
+                cessee = data.get("entreprise_cessee", False)
+                statut = "Radiee" if cessee else "Active"
+                date_cess = data.get("date_cessation", "")
+                reps = data.get("representants") or []
+                rep_lines = "\n".join([
+                    f"  - {(r.get('prenom') or '')} {(r.get('nom') or '')} — {r.get('qualite', '')}"
+                    for r in reps[:3]
+                ])
+                date_crea = data.get("date_creation", "")
+                forme = data.get("forme_juridique", "")
+                capital = data.get("capital")
+                capital_str = f"{capital/1000:.0f}k EUR" if capital else "N/A"
+                # Add to targets
+                await _add_company_to_targets(siren_val)
+                resp_lines = [
+                    f"**{nom}** — SIREN {siren_val}\n",
+                    f"- **Statut** : {statut}" + (f" ({date_cess})" if date_cess else ""),
+                    f"- **Siège** : {ville}{', ' + dept if dept else ''}",
+                    f"- **Activité** : {naf}",
+                    f"- **Forme juridique** : {forme}",
+                    f"- **Création** : {date_crea}",
+                    f"- **CA** : {ca_str}  |  **Effectif** : {effectif}  |  **Capital** : {capital_str}",
+                    "",
+                    "**Dirigeants :**",
+                    rep_lines if rep_lines else "  N/A",
+                    "",
+                    "*Source : Pappers MCP — données open data*",
+                ]
+                return {
+                    "response": "\n".join(resp_lines),
+                    "source": "pappers-mcp",
+                    "targets_updated": True,
+                }
+            else:
+                return {
+                    "response": f"Aucune entreprise trouvée pour le SIREN **{siren_val}** dans la base Pappers.",
+                    "source": "pappers-mcp",
+                    "targets_updated": False,
+                }
+        except Exception as e:
+            print(f"[Copilot] SIREN lookup error: {e}")
+
+    # Broad intent detection — trigger Pappers for sector/screening queries
     wants_pappers = any(w in ql for w in [
-        "pappers", "cherche", "recherche", "trouve", "identifier",
-        "screening", "screener", "scan", "prospecter", "nouvelles cibles",
-        "open data", "siren", "societe", "société", "entreprise",
-        "pme", "eti", "groupe", "parle moi", "liste", "quelles",
-        "montre", "affiche", "donne", "ca superieur", "chiffre",
-        "salarie", "salarié", "effectif", "france",
+        "pappers", "screening", "screener", "scan", "prospecter", "nouvelles cibles",
+        "open data", "pme", "eti",
+        "ca superieur", "chiffre affaires",
+        "salarie", "salarié", "effectif",
     ])
 
     # Sector → NAF code mapping (broad)
@@ -1697,84 +1752,27 @@ async def copilot_query(q: str = Query(...)):
                     )
                 pappers_context = "\n".join(pappers_lines)
 
-                # --- Replace targets with Pappers search results ---
-                new_enriched = []
-                new_raw = []
-                seen_sirens = set()
+                # --- MERGE new results into existing targets (don't replace) ---
+                existing_sirens = {t.get("siren") for t in enriched_targets}
+                added_count = 0
                 for idx, r in enumerate(resultats):
                     siren = r.get("siren", "")
-                    if not siren or siren in seen_sirens:
+                    if not siren or siren in existing_sirens:
                         continue
-                    seen_sirens.add(siren)
-                    new_target = build_target_from_search(idx + 1, r, pappers_filters)
-                    new_raw.append(new_target)
-                    new_enriched.append(enrich_target(new_target))
+                    existing_sirens.add(siren)
+                    new_target = build_target_from_search(len(enriched_targets) + added_count + 1, r, pappers_filters)
+                    raw_targets.append(new_target)
+                    enriched_targets.append(enrich_target(new_target))
+                    added_count += 1
 
-                if new_enriched:
-                    new_enriched.sort(key=lambda x: x["globalScore"], reverse=True)
-                    enriched_targets[:] = new_enriched[:10]
-                    raw_targets[:] = new_raw[:10]
+                if added_count:
+                    enriched_targets.sort(key=lambda x: x["globalScore"], reverse=True)
                     save_cache(raw_targets)
                     targets_updated = True
-                    print(f"[Copilot] Replaced targets: {len(enriched_targets)} from Pappers ({total} total)")
+                    print(f"[Copilot] Added {added_count} targets from Pappers (total: {len(enriched_targets)})")
 
         except Exception as e:
             print(f"[Copilot] Pappers enrichment error: {e}")
-
-    # --- Direct SIREN lookup (9-digit number detected in query) ---
-    siren_match = re.search(r'\b(\d{9})\b', q)
-    if siren_match and PAPPERS_MCP_URL:
-        siren_val = siren_match.group(1)
-        try:
-            data = await get_pappers_company(siren_val)
-            if data and isinstance(data, dict) and "raw" not in data and data.get("nom_entreprise"):
-                nom = data.get("nom_entreprise", "Entreprise inconnue")
-                siege = data.get("siege") or {}
-                ville = siege.get("ville", "")
-                dept = siege.get("departement", "")
-                naf = data.get("libelle_code_naf", "")
-                ca = data.get("chiffre_affaires")
-                ca_str = f"{ca/1e6:.1f}M EUR" if ca and ca > 0 else "N/A"
-                effectif = data.get("effectif", "N/A")
-                cessee = data.get("entreprise_cessee", False)
-                statut = "Radiee" if cessee else "Active"
-                date_cess = data.get("date_cessation", "")
-                reps = data.get("representants") or []
-                rep_lines = "\n".join([
-                    f"  - {(r.get('prenom') or '')} {(r.get('nom') or '')} — {r.get('qualite', '')}"
-                    for r in reps[:3]
-                ])
-                date_crea = data.get("date_creation", "")
-                forme = data.get("forme_juridique", "")
-                capital = data.get("capital")
-                capital_str = f"{capital/1000:.0f}k EUR" if capital else "N/A"
-                resp_lines = [
-                    f"**{nom}** — SIREN {siren_val}\n",
-                    f"- **Statut** : {statut}" + (f" ({date_cess})" if date_cess else ""),
-                    f"- **Siège** : {ville}{', ' + dept if dept else ''}",
-                    f"- **Activité** : {naf}",
-                    f"- **Forme juridique** : {forme}",
-                    f"- **Création** : {date_crea}",
-                    f"- **CA** : {ca_str}  |  **Effectif** : {effectif}  |  **Capital** : {capital_str}",
-                    "",
-                    "**Dirigeants :**",
-                    rep_lines if rep_lines else "  N/A",
-                    "",
-                    "*Source : Pappers MCP — données open data*",
-                ]
-                return {
-                    "response": "\n".join(resp_lines),
-                    "source": "pappers-mcp",
-                    "targets_updated": False,
-                }
-            else:
-                return {
-                    "response": f"Aucune entreprise trouvée pour le SIREN **{siren_val}** dans la base Pappers.",
-                    "source": "pappers-mcp",
-                    "targets_updated": False,
-                }
-        except Exception as e:
-            print(f"[Copilot] SIREN lookup error: {e}")
 
     # --- Direct company name search (short query, no trigger keywords, likely a company name) ---
     is_company_name_search = (
@@ -1791,6 +1789,7 @@ async def copilot_query(q: str = Query(...)):
                 resultats = pappers_result["resultats"][:5]
                 total = pappers_result.get("total", len(resultats))
                 lines = [f"**Recherche Pappers pour \"{q}\" — {total} résultat(s) :**\n"]
+                add_tasks = []
                 for r in resultats:
                     nom = r.get("nom_entreprise", "N/A")
                     siren_r = r.get("siren", "")
@@ -1811,11 +1810,16 @@ async def copilot_query(q: str = Query(...)):
                     for rep in reps_r[:1]:
                         lines.append(f"  Dirigeant : {(rep.get('prenom') or '')} {(rep.get('nom') or '')} — {rep.get('qualite', '')}")
                     lines.append("")
+                    if siren_r:
+                        add_tasks.append(_add_company_to_targets(siren_r))
                 lines.append("*Source : Pappers MCP — données open data*")
+                # Add found companies to targets in background
+                if add_tasks:
+                    await asyncio.gather(*add_tasks, return_exceptions=True)
                 return {
                     "response": "\n".join(lines),
                     "source": "pappers-mcp",
-                    "targets_updated": False,
+                    "targets_updated": bool(add_tasks),
                 }
         except Exception as e:
             print(f"[Copilot] Company name search error: {e}")
