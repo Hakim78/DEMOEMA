@@ -27,7 +27,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from demo_data import SIGNAL_CATALOG, DEFAULT_SCORING_WEIGHTS, SECTORS_HEAT
-from pappers_loader import load_targets_from_pappers, load_cache, save_cache
+from pappers_loader import load_targets_from_pappers, load_cache, save_cache, build_target, detect_signals
 
 
 # ==========================================================================
@@ -90,6 +90,7 @@ PAPPERS_MCP_URL = os.getenv("PAPPERS_MCP_URL", "")
 
 # Global list populated at startup
 enriched_targets = []
+_next_idx = 0  # auto-increment index for new targets
 # Keep raw targets (pre-enrichment) for re-scoring
 raw_targets = []
 
@@ -156,6 +157,30 @@ app.add_middleware(
 
 # Ensure targets are loaded even if lifespan doesn't run (Vercel serverless)
 _load_targets_sync()
+
+
+async def _add_company_to_targets(siren: str) -> Optional[dict]:
+    """Fetch a company from Pappers, build a target, and add it to enriched_targets.
+    Returns the enriched target dict, or None if it fails."""
+    global enriched_targets, raw_targets, _next_idx
+    # Already present?
+    existing = next((t for t in enriched_targets if t.get("siren") == siren), None)
+    if existing:
+        return existing
+    try:
+        company_info = await get_pappers_company(siren)
+        if not company_info or not isinstance(company_info, dict) or "raw" in company_info:
+            return None
+        _next_idx = max(_next_idx, len(enriched_targets)) + 1
+        target = build_target(idx=_next_idx, company_info=company_info, search_info={})
+        raw_targets.append(target)
+        enriched = enrich_target(target)
+        enriched_targets.append(enriched)
+        save_cache(raw_targets)
+        return enriched
+    except Exception as e:
+        print(f"[EdRCF] _add_company_to_targets error for {siren}: {e}")
+        return None
 
 
 # ==========================================================================
@@ -694,15 +719,17 @@ def get_targets(
 
 @app.get("/api/targets/search-pappers")
 async def search_pappers_endpoint(q: str = Query(...)):
-    """Search real companies via Pappers MCP and return enriched results."""
+    """Search real companies via Pappers MCP, enrich and add to targets."""
     pappers_data = await search_pappers(q)
 
-    # If we got raw results, try to extract and format them
     if isinstance(pappers_data, dict) and "resultats" in pappers_data:
         companies = []
+        # Enrich each result in background — add to enriched_targets
+        add_tasks = []
         for r in pappers_data["resultats"][:10]:
+            siren = r.get("siren", "")
             company = {
-                "siren": r.get("siren", ""),
+                "siren": siren,
                 "name": r.get("nom_entreprise", r.get("denomination", "")),
                 "siege": r.get("siege", {}),
                 "dirigeants": r.get("representants", []),
@@ -714,9 +741,16 @@ async def search_pappers_endpoint(q: str = Query(...)):
                 "capital": r.get("capital", ""),
             }
             companies.append(company)
+            # Queue enrichment for each company with a SIREN
+            if siren:
+                add_tasks.append(_add_company_to_targets(siren))
+
+        # Run all enrichments concurrently (best-effort, don't block response)
+        if add_tasks:
+            await asyncio.gather(*add_tasks, return_exceptions=True)
+
         return {"data": companies, "total": pappers_data.get("total", 0), "source": "pappers-mcp"}
 
-    # Return raw data if format is unexpected
     return {"data": pappers_data, "source": "pappers-mcp"}
 
 
@@ -1265,10 +1299,18 @@ async def get_score_defaillance_endpoint(siren: str, annee: Optional[str] = Quer
 
 
 @app.get("/api/targets/{target_id}")
-def get_target(target_id: str):
+async def get_target(target_id: str):
+    # 1) Lookup by id
     target = next((t for t in enriched_targets if t["id"] == target_id), None)
     if target:
         return {"data": target}
+    # 2) Maybe target_id is a SIREN — try to fetch from Pappers and add
+    if target_id.replace("-", "").isdigit():
+        siren = target_id.replace("edrcf-", "").replace("edrcf", "")
+        if len(siren) == 9:
+            added = await _add_company_to_targets(siren)
+            if added:
+                return {"data": added}
     raise HTTPException(status_code=404, detail="Target not found")
 
 
