@@ -112,7 +112,7 @@ export default function RelationshipGraph() {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)] w-full max-w-7xl mx-auto pb-4 px-4 overflow-hidden">
+    <div className="flex flex-col h-[calc(100dvh-4rem)] w-full pb-4 px-4 overflow-hidden">
       <header className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 mb-6 pt-4">
         <div>
           <h1 className="text-3xl md:text-4xl font-black tracking-tight text-white mb-2 flex items-center gap-4">

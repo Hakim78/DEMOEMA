@@ -218,7 +218,7 @@ export default function TargetsPage() {
   const ebitdaRanges = apiFilters?.ebitda_ranges || ["< 3M", "3-10M", "10-30M", "> 30M"];
 
   return (
-    <div className="flex flex-col gap-5 sm:gap-8 lg:gap-10 w-full max-w-7xl mx-auto py-4 h-[calc(100dvh-7rem)] sm:h-[calc(100dvh-8rem)]">
+    <div className="flex flex-col gap-5 sm:gap-8 lg:gap-10 w-full py-4 h-[calc(100dvh-7rem)] sm:h-[calc(100dvh-8rem)]">
 
       {/* ── Filter Sidebar Overlay ───────────────────────────────── */}
       <AnimatePresence>

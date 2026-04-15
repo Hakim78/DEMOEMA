@@ -153,7 +153,7 @@ export default function TargetDetail() {
   const scoringDimensions = targetData.scoring_details ? Object.entries(targetData.scoring_details) : [];
 
   return (
-    <div className="flex flex-col gap-6 sm:gap-8 lg:gap-12 w-full max-w-7xl mx-auto pb-20 sm:pb-32 pt-4 sm:pt-6 px-0 sm:px-4 relative">
+    <div className="flex flex-col gap-6 sm:gap-8 lg:gap-12 w-full pb-20 sm:pb-32 pt-4 sm:pt-6 px-0 sm:px-4 relative">
       {/* Toast Notification */}
       <AnimatePresence>
         {notification && (
