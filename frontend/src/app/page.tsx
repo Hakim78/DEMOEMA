@@ -137,7 +137,7 @@ export default function Home() {
   const maxPriority = Math.max(...Object.values(priorityDistribution), 1);
 
   return (
-    <div className="flex flex-col gap-6 sm:gap-8 lg:gap-10 w-full max-w-7xl mx-auto py-4 relative overflow-x-hidden">
+    <div className="flex flex-col gap-6 sm:gap-8 lg:gap-10 w-full max-w-7xl mx-auto py-4 relative">
       {/* Toast Notification */}
       <AnimatePresence>
         {notification && (

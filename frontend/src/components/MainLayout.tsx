@@ -19,7 +19,7 @@ export default function MainLayout({
         <Sidebar isOpen={isSidebarOpen} setIsOpen={setIsSidebarOpen} />
       </div>
       
-      <main className="flex-1 lg:ml-72 min-h-screen relative flex flex-col w-full overflow-x-hidden">
+      <main className="lg:ml-72 min-h-screen relative w-full">
         {/* Mobile Header */}
         <header className="lg:hidden flex items-center justify-between px-4 py-3 sm:p-6 bg-black/40 backdrop-blur-3xl border-b border-white/5 sticky top-0 z-[80] print:hidden">
           <div className="flex items-center gap-3">
@@ -43,7 +43,7 @@ export default function MainLayout({
           <div className="absolute bottom-0 right-[20%] w-[20%] h-[20%] rounded-full bg-indigo-500/5 blur-[100px]" />
         </div>
         
-        <div className="flex-1 p-4 md:p-8">
+        <div className="p-4 md:p-8">
           {children}
         </div>
 
