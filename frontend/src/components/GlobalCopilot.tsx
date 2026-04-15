@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Sparkles, Send, X, Minimize2, Maximize2,
   Terminal, User, Activity, Target, Zap, TrendingUp,
-  MessageSquare, Layers, Bot, Database
+  MessageSquare, Layers, Bot, Database, Copy, Check, Trash2, Keyboard
 } from "lucide-react";
 import { usePathname } from "next/navigation";
 
@@ -25,7 +25,6 @@ function renderMarkdown(text: string) {
   lines.forEach((line, i) => {
     const trimmed = line.trim();
 
-    // Bullet list items
     if (trimmed.startsWith("- ") || trimmed.startsWith("• ") || trimmed.startsWith("* ")) {
       const content = trimmed.slice(2);
       elements.push(
@@ -82,14 +81,53 @@ function renderInline(text: string): React.ReactNode {
   return parts.length > 0 ? <>{parts}</> : text;
 }
 
+// Suggestions contextuelles par page
+const SUGGESTIONS: Record<string, string[]> = {
+  "/": [
+    "Top 5 cibles prioritaires",
+    "Fondateurs > 60 ans",
+    "Analyse sectorielle",
+    "Signaux recents",
+  ],
+  "/targets": [
+    "Cibles score > 65",
+    "Entreprises familiales",
+    "Rechercher par SIREN",
+    "Export pipeline",
+  ],
+  "/pipeline": [
+    "Etat du pipeline",
+    "Taux de conversion",
+    "Cibles en closing",
+    "Prochaines echeances",
+  ],
+  "/signals": [
+    "Signaux haute priorite",
+    "Alertes BODACC",
+    "Tendances sectorielles",
+    "Nouveaux signaux",
+  ],
+  "/graph": [
+    "Chemins d'approche",
+    "Connexions cles",
+    "Mapping reseau",
+    "Noeuds influents",
+  ],
+};
+
 export default function GlobalCopilot() {
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const pathname = usePathname();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Suggestions basees sur la page active
+  const currentSuggestions = SUGGESTIONS[pathname] || SUGGESTIONS["/"];
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -97,10 +135,39 @@ export default function GlobalCopilot() {
     }
   }, [messages, isLoading]);
 
+  // Focus input quand le copilot s'ouvre
+  useEffect(() => {
+    if (isOpen && !isMinimized) {
+      setTimeout(() => inputRef.current?.focus(), 300);
+    }
+  }, [isOpen, isMinimized]);
+
   useEffect(() => {
     const handleToggle = () => setIsOpen(prev => !prev);
     window.addEventListener("toggle-copilot", handleToggle);
     return () => window.removeEventListener("toggle-copilot", handleToggle);
+  }, []);
+
+  // Raccourci clavier Ctrl+J
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "j") {
+        e.preventDefault();
+        setIsOpen(prev => !prev);
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  const handleCopy = useCallback((content: string, id: string) => {
+    navigator.clipboard.writeText(content);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  }, []);
+
+  const handleClear = useCallback(() => {
+    setMessages([]);
   }, []);
 
   const handleSend = async (e?: React.FormEvent, directValue?: string) => {
@@ -125,7 +192,6 @@ export default function GlobalCopilot() {
       if (!res.ok) throw new Error("Connexion API echouee");
       const data = await res.json();
 
-      // If copilot injected new targets, notify dashboard to refresh
       if (data.targets_updated) {
         window.dispatchEvent(new CustomEvent("targets-updated"));
       }
@@ -159,11 +225,16 @@ export default function GlobalCopilot() {
         whileHover={{ scale: 1.05 }}
         whileTap={{ scale: 0.95 }}
         onClick={() => setIsOpen(!isOpen)}
-        className="fixed bottom-5 right-4 sm:bottom-8 sm:right-8 w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-indigo-600 text-white shadow-[0_20px_50px_rgba(79,70,229,0.4)] z-[50] flex items-center justify-center border border-white/20 group"
+        className="fixed bottom-5 right-4 sm:bottom-8 sm:right-8 w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-indigo-600 text-white shadow-[0_20px_50px_rgba(79,70,229,0.4)] z-50 flex items-center justify-center border border-white/20 group"
       >
-        {isOpen ? <X size={24} /> : <MessageSquare size={24} className="group-hover:rotate-12 transition-transform" />}
-        {!isOpen && (
-           <div className="absolute -top-1 -right-1 w-4 h-4 bg-emerald-500 rounded-full border-2 border-[#050505] animate-pulse" />
+        {isOpen ? <X size={22} /> : <MessageSquare size={22} className="group-hover:rotate-12 transition-transform" />}
+        {!isOpen && messages.length > 0 && (
+           <div className="absolute -top-2 -right-2 min-w-5 h-5 px-1 bg-emerald-500 rounded-full border-2 border-[#050505] flex items-center justify-center">
+             <span className="text-[9px] font-black text-white">{messages.length}</span>
+           </div>
+        )}
+        {!isOpen && messages.length === 0 && (
+           <div className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-emerald-500 rounded-full border-2 border-[#050505] animate-pulse" />
         )}
       </motion.button>
 
@@ -176,37 +247,48 @@ export default function GlobalCopilot() {
             className={`
               fixed z-[100] bg-[#0A0A0A]/95 backdrop-blur-3xl border border-white/10 shadow-[0_30px_100px_rgba(0,0,0,0.8)] flex flex-col overflow-hidden transition-all duration-500 ease-in-out
               ${isMinimized
-                ? "bottom-24 sm:bottom-32 right-4 sm:right-8 w-64 sm:w-80 h-20 rounded-2xl sm:rounded-[3rem]"
-                : "inset-x-3 bottom-24 top-16 sm:inset-x-auto sm:top-auto sm:bottom-28 sm:right-8 sm:w-full sm:max-w-md sm:h-[min(650px,calc(100dvh-10rem))] rounded-2xl sm:rounded-[3rem]"
+                ? "bottom-24 sm:bottom-32 right-4 sm:right-8 w-64 sm:w-80 h-20 rounded-2xl"
+                : "inset-x-3 bottom-24 top-16 sm:inset-x-auto sm:top-auto sm:bottom-28 sm:right-8 sm:w-full sm:max-w-md sm:h-[min(650px,calc(100dvh-10rem))] rounded-2xl"
               }
             `}
           >
             {/* Header */}
-            <div className="px-4 py-3 sm:p-6 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
-              <div className="flex items-center gap-3 sm:gap-4 min-w-0">
-                <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shrink-0">
-                  <Sparkles size={18} className="sm:hidden" /><Sparkles size={20} className="hidden sm:block" />
+            <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between bg-white/[0.02] shrink-0">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-8 h-8 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shrink-0">
+                  <Sparkles size={16} />
                 </div>
                 <div className="min-w-0">
-                   <h3 className="text-xs sm:text-sm font-black text-white uppercase tracking-widest leading-none mb-1 truncate">EDRCF 6.0 Copilot</h3>
-                   <div className="flex items-center gap-1.5 ">
+                   <h3 className="text-xs font-black text-white uppercase tracking-widest leading-none mb-0.5 truncate">Copilot EDRCF</h3>
+                   <div className="flex items-center gap-1.5">
                       <div className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
-                      <span className="text-[8px] font-black text-emerald-500/60 uppercase tracking-widest">Lien Neuronal Actif</span>
+                      <span className="text-[7px] font-black text-emerald-500/60 uppercase tracking-widest">Actif</span>
+                      <span className="text-[7px] text-gray-700 mx-0.5">|</span>
+                      <span className="text-[7px] font-bold text-gray-600 uppercase tracking-wider">Ctrl+J</span>
                    </div>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1">
+                {messages.length > 0 && (
+                  <button
+                    onClick={handleClear}
+                    className="p-1.5 rounded-lg bg-white/5 text-gray-500 hover:text-rose-400 transition-colors"
+                    title="Effacer la conversation"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
                 <button
                   onClick={() => setIsMinimized(!isMinimized)}
-                  className="p-2 rounded-xl bg-white/5 text-gray-400 hover:text-white transition-colors"
+                  className="p-1.5 rounded-lg bg-white/5 text-gray-400 hover:text-white transition-colors"
                 >
-                  {isMinimized ? <Maximize2 size={16} /> : <Minimize2 size={16} />}
+                  {isMinimized ? <Maximize2 size={14} /> : <Minimize2 size={14} />}
                 </button>
                 <button
                   onClick={() => setIsOpen(false)}
-                  className="p-2 rounded-xl bg-white/5 text-gray-400 hover:text-white transition-colors"
+                  className="p-1.5 rounded-lg bg-white/5 text-gray-400 hover:text-white transition-colors"
                 >
-                  <X size={16} />
+                  <X size={14} />
                 </button>
               </div>
             </div>
@@ -216,15 +298,33 @@ export default function GlobalCopilot() {
               <>
                 <div
                   ref={scrollRef}
-                  className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 sm:space-y-6 custom-scrollbar"
+                  className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar"
                 >
                   {messages.length === 0 ? (
-                    <div className="h-full flex flex-col items-center justify-center opacity-40 text-center space-y-4 px-4 sm:px-10">
-                       <Target size={40} className="text-indigo-400 mb-2" />
-                       <p className="text-xs font-black text-white uppercase tracking-[0.2em]">Protocole Intelligence EDRCF</p>
-                       <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest leading-relaxed">
-                          Surveillance de 2 408 entites. Pret pour une analyse approfondie, un mapping sectoriel ou une recherche de cibles.
+                    <div className="h-full flex flex-col items-center justify-center text-center px-4">
+                       <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mb-4">
+                         <Target size={28} className="text-indigo-400" />
+                       </div>
+                       <p className="text-xs font-black text-white uppercase tracking-[0.15em] mb-1.5">Intelligence EDRCF</p>
+                       <p className="text-[10px] text-gray-500 leading-relaxed mb-6 max-w-[260px]">
+                          Posez une question sur les cibles, les signaux, le pipeline ou le reseau.
                        </p>
+
+                       {/* Suggestions grille -- toujours visibles */}
+                       <div className="grid grid-cols-2 gap-2 w-full max-w-[300px]">
+                          {currentSuggestions.map(s => (
+                            <button
+                              key={s}
+                              onClick={() => {
+                                setInput(s);
+                                handleSend(undefined, s);
+                              }}
+                              className="px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-[10px] font-bold text-gray-400 hover:bg-indigo-500/10 hover:text-indigo-400 hover:border-indigo-500/20 transition-all active:scale-95 text-left leading-tight"
+                            >
+                              {s}
+                            </button>
+                          ))}
+                       </div>
                     </div>
                   ) : (
                     messages.map((m) => (
@@ -232,38 +332,45 @@ export default function GlobalCopilot() {
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
                         key={m.id}
-                        className={`flex gap-4 ${m.role === "user" ? "flex-row-reverse" : ""}`}
+                        className={`flex gap-3 ${m.role === "user" ? "flex-row-reverse" : ""}`}
                       >
-                        <div className={`w-8 h-8 rounded-xl shrink-0 flex items-center justify-center border
+                        <div className={`w-7 h-7 rounded-lg shrink-0 flex items-center justify-center border
                           ${m.role === "user"
                             ? "bg-white/5 border-white/10 text-gray-400"
                             : "bg-indigo-500/10 border-indigo-500/20 text-indigo-400"}
                         `}>
-                          {m.role === "user" ? <User size={16} /> : <Sparkles size={16} />}
+                          {m.role === "user" ? <User size={14} /> : <Sparkles size={14} />}
                         </div>
-                        <div className={`max-w-[80%] rounded-2xl p-4 text-[13px] leading-relaxed
-                          ${m.role === "user"
-                            ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/10 rounded-tr-none"
-                            : "bg-white/[0.03] border border-white/10 text-gray-300 shadow-xl rounded-tl-none"}
-                        `}>
-                          {m.role === "assistant" ? renderMarkdown(m.content) : m.content}
+                        <div className="flex-1 min-w-0">
+                          <div className={`rounded-2xl p-3 text-[13px] leading-relaxed
+                            ${m.role === "user"
+                              ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/10 rounded-tr-none ml-8"
+                              : "bg-white/[0.03] border border-white/10 text-gray-300 shadow-xl rounded-tl-none mr-4"}
+                          `}>
+                            {m.role === "assistant" ? renderMarkdown(m.content) : m.content}
+                          </div>
 
-                          <div className={`flex items-center gap-3 mt-2 ${m.role === "user" ? "justify-end" : "justify-between"}`}>
-                            <div className={`text-[9px] opacity-40 font-bold uppercase tracking-widest`}>
+                          <div className={`flex items-center gap-2 mt-1.5 px-1 ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                            <span className="text-[8px] opacity-30 font-bold uppercase tracking-widest">
                               {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </div>
+                            </span>
                             {m.role === "assistant" && m.source && (
-                              <div className={`flex items-center gap-1 text-[8px] font-black uppercase tracking-widest rounded-md px-2 py-0.5 border
+                              <span className={`text-[7px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border
                                 ${m.source === "claude-ai"
                                   ? "bg-purple-500/10 text-purple-400 border-purple-500/10"
                                   : "bg-emerald-500/10 text-emerald-400 border-emerald-500/10"}
                               `}>
-                                {m.source === "claude-ai" ? (
-                                  <><Bot size={9} /> Claude AI</>
-                                ) : (
-                                  <><Database size={9} /> Base EDRCF</>
-                                )}
-                              </div>
+                                {m.source === "claude-ai" ? "IA" : "Base"}
+                              </span>
+                            )}
+                            {m.role === "assistant" && (
+                              <button
+                                onClick={() => handleCopy(m.content, m.id)}
+                                className="text-gray-600 hover:text-white transition-colors p-0.5"
+                                title="Copier"
+                              >
+                                {copiedId === m.id ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
+                              </button>
                             )}
                           </div>
                         </div>
@@ -271,11 +378,11 @@ export default function GlobalCopilot() {
                     ))
                   )}
                   {isLoading && (
-                    <div className="flex gap-4">
-                      <div className="w-8 h-8 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
-                         <Sparkles size={16} className="animate-spin" />
+                    <div className="flex gap-3">
+                      <div className="w-7 h-7 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+                         <Sparkles size={14} className="animate-spin" />
                       </div>
-                      <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-4 flex gap-1 items-center">
+                      <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-3 flex gap-1 items-center">
                          <div className="w-1 h-1 bg-indigo-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
                          <div className="w-1 h-1 bg-indigo-500 rounded-full animate-bounce [animation-delay:-0.15s]" />
                          <div className="w-1 h-1 bg-indigo-500 rounded-full animate-bounce" />
@@ -284,23 +391,17 @@ export default function GlobalCopilot() {
                   )}
                 </div>
 
-                {/* Suggestions Chips - Show when few messages */}
-                {messages.length < 3 && (
-                   <div className="px-4 sm:px-6 py-2 flex gap-2 overflow-x-auto scrollbar-hide pb-1">
-                      {[
-                        "Top 5 cibles",
-                        "Fondateurs > 60 ans",
-                        "Analyse sectorielle",
-                        "Etat du pipeline",
-                        "Filtres disponibles"
-                      ].map(s => (
+                {/* Suggestions inline -- apres premiers messages */}
+                {messages.length > 0 && messages.length < 4 && !isLoading && (
+                   <div className="px-4 py-2 flex flex-wrap gap-1.5 border-t border-white/5">
+                      {currentSuggestions.slice(0, 3).map(s => (
                         <button
                           key={s}
                           onClick={() => {
                             setInput(s);
                             handleSend(undefined, s);
                           }}
-                          className="whitespace-nowrap px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-[10px] font-black uppercase text-gray-400 hover:bg-white/10 hover:text-white transition-all active:scale-95"
+                          className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-[9px] font-bold text-gray-500 hover:bg-indigo-500/10 hover:text-indigo-400 hover:border-indigo-500/20 transition-all active:scale-95"
                         >
                           {s}
                         </button>
@@ -309,12 +410,13 @@ export default function GlobalCopilot() {
                 )}
 
                 {/* Input Area */}
-                <div className="p-4 sm:p-6 bg-white/[0.02] border-t border-white/10">
+                <div className="p-3 sm:p-4 bg-white/[0.02] border-t border-white/10 shrink-0">
                   <form
                     onSubmit={handleSend}
                     className="relative"
                   >
                     <textarea
+                      ref={inputRef}
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
                       onKeyDown={(e) => {
@@ -323,28 +425,20 @@ export default function GlobalCopilot() {
                           handleSend();
                         }
                       }}
-                      placeholder="Posez votre question a l'intelligence EDRCF..."
+                      placeholder="Posez votre question..."
                       rows={1}
-                      className="w-full bg-white/[0.05] border border-white/10 rounded-2xl py-4 pl-4 pr-14 text-sm text-white placeholder-gray-600 outline-none focus:border-indigo-500/50 transition-all resize-none"
+                      className="w-full bg-white/[0.05] border border-white/10 rounded-xl py-3 pl-4 pr-12 text-sm text-white placeholder-gray-600 outline-none focus:border-indigo-500/50 transition-all resize-none"
                     />
                     <button
                       type="submit"
                       disabled={!input.trim() || isLoading}
-                      className={`absolute right-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-xl flex items-center justify-center transition-all
+                      className={`absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-lg flex items-center justify-center transition-all
                         ${input.trim() && !isLoading ? "bg-indigo-600 text-white shadow-lg" : "bg-white/5 text-gray-600"}
                       `}
                     >
-                      <Send size={18} />
+                      <Send size={16} />
                     </button>
                   </form>
-                  <div className="mt-4 flex items-center justify-between">
-                     <div className="flex items-center gap-2 text-[10px] text-gray-600 font-black uppercase tracking-widest">
-                        <Terminal size={12} /> Contexte: Actif
-                     </div>
-                     <div className="flex items-center gap-2 text-[10px] text-gray-600 font-bold">
-                        Entree pour envoyer
-                     </div>
-                  </div>
                 </div>
               </>
             )}
