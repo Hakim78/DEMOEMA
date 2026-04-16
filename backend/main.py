@@ -569,6 +569,56 @@ async def copilot_ai_query(query: str, context: str):
     return None
 
 
+async def copilot_ai_query_stream(query: str, context: str):
+    """Streaming version of copilot_ai_query. Yields text chunks."""
+    if AI_GATEWAY_API_KEY:
+        api_key = AI_GATEWAY_API_KEY
+        base_url = "https://ai-gateway.vercel.sh/v1/chat/completions"
+        model = "deepseek/deepseek-chat"
+    elif DEEPSEEK_API_KEY:
+        api_key = DEEPSEEK_API_KEY
+        base_url = "https://api.deepseek.com/v1/chat/completions"
+        model = "deepseek-chat"
+    else:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            async with client.stream(
+                "POST",
+                base_url,
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": model,
+                    "stream": True,
+                    "max_tokens": 1024,
+                    "temperature": 0.3,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "Tu es le Copilot IA d'EdRCF 6.0, plateforme d'origination M&A. "
+                                "Reponds en francais, de maniere concise et professionnelle. "
+                                "Utilise le markdown pour formater tes reponses.\n\n"
+                                f"Contexte:\n{context}"
+                            ),
+                        },
+                        {"role": "user", "content": query},
+                    ],
+                },
+            ) as response:
+                async for line in response.aiter_lines():
+                    if line.startswith("data: ") and "[DONE]" not in line:
+                        try:
+                            data = json.loads(line[6:])
+                            delta = data["choices"][0]["delta"].get("content", "")
+                            if delta:
+                                yield delta
+                        except Exception:
+                            pass
+    except Exception as e:
+        print(f"[Copilot Stream] Error: {e}")
+
+
 # ==========================================================================
 # API Endpoints
 # ==========================================================================
@@ -1492,6 +1542,90 @@ def build_target_from_search(idx, search_result, search_context=None):
     }
 
 
+from fastapi.responses import StreamingResponse
+
+
+@app.get("/api/copilot/stream")
+async def copilot_stream_endpoint(q: str = Query(...)):
+    """Server-Sent Events streaming version of the copilot.
+    Yields: data: {"chunk": "..."}\n\n  and  data: {"done": true, "source": "...", "targets_updated": bool}\n\n
+    """
+    async def generate():
+        global enriched_targets, raw_targets
+        targets_updated = False
+
+        context_lines = [
+            f"- {t['name']} ({t['sector']}, {t.get('city','?')}): Score {t['globalScore']}, {t['priorityLevel']}"
+            for t in enriched_targets[:5]
+        ]
+        context = f"Cibles EdRCF ({len(enriched_targets)} total):\n" + "\n".join(context_lines)
+
+        # SIREN direct lookup
+        siren_match = re.search(r'\b(\d{9})\b', q)
+        if siren_match:
+            siren_val = siren_match.group(1)
+            try:
+                company_info = await _papperclip_get_company(siren_val)
+                if company_info and isinstance(company_info, dict) and company_info.get("siren"):
+                    await _add_company_to_targets(siren_val)
+                    targets_updated = True
+                    nom = company_info.get("nom_entreprise", siren_val)
+                    siege = company_info.get("siege") or {}
+                    ville = siege.get("ville", "")
+                    naf = company_info.get("libelle_code_naf", "")
+                    ca = company_info.get("chiffre_affaires", 0)
+                    ca_str = f"{ca/1e6:.1f}M EUR" if ca and ca > 0 else "N/A"
+                    reps = company_info.get("representants") or []
+                    rep_lines = "\n".join([
+                        f"  - {r.get('prenom','')} {r.get('nom','')} ({r.get('qualite','')})"
+                        for r in reps[:3]
+                    ])
+                    text = (
+                        f"**{nom}** — SIREN {siren_val}\n\n"
+                        f"- **Siège** : {ville}\n"
+                        f"- **Activité** : {naf}\n"
+                        f"- **CA** : {ca_str}\n\n"
+                        f"**Dirigeants :**\n{rep_lines or '  N/A'}\n\n"
+                        f"*Entreprise ajoutée à la base EdRCF.*"
+                    )
+                    # Simulate streaming for rule-based response
+                    chunk_size = 40
+                    for i in range(0, len(text), chunk_size):
+                        yield f"data: {json.dumps({'chunk': text[i:i+chunk_size]})}\n\n"
+                    yield f"data: {json.dumps({'done': True, 'source': 'pappers', 'targets_updated': True})}\n\n"
+                    return
+            except Exception as e:
+                print(f"[Stream] SIREN lookup error: {e}")
+
+        # Stream AI response
+        ai_streamed = False
+        async for chunk in copilot_ai_query_stream(q, context):
+            ai_streamed = True
+            yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+
+        if not ai_streamed:
+            # Fallback: call existing rule-based copilot
+            try:
+                result = await copilot_query(q=q)
+                text = result.get("response", "Désolé, je n'ai pas pu traiter cette demande.")
+                targets_updated = result.get("targets_updated", False)
+                chunk_size = 40
+                for i in range(0, len(text), chunk_size):
+                    yield f"data: {json.dumps({'chunk': text[i:i+chunk_size]})}\n\n"
+                yield f"data: {json.dumps({'done': True, 'source': result.get('source', 'rule-based'), 'targets_updated': targets_updated})}\n\n"
+                return
+            except Exception as e:
+                yield f"data: {json.dumps({'chunk': 'Erreur de connexion. Veuillez réessayer.'})}\n\n"
+
+        yield f"data: {json.dumps({'done': True, 'source': 'ai', 'targets_updated': targets_updated})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.get("/api/copilot/query")
 async def copilot_query(q: str = Query(...)):
     global enriched_targets, raw_targets
@@ -2374,6 +2508,34 @@ async def refresh_targets():
             "infogreffe_actes": actes_count,
         }
     raise HTTPException(500, "Echec du chargement Pappers")
+
+
+@app.get("/api/admin/refresh-db")
+async def admin_refresh_db(secret: str = Query(default="")):
+    """Cron-safe endpoint: refresh 50 companies from Papperclip and save to Supabase.
+    Optional: protect with CRON_SECRET env var."""
+    cron_secret = os.getenv("CRON_SECRET", "")
+    if cron_secret and secret != cron_secret:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    global enriched_targets, raw_targets
+    try:
+        fetched = await load_targets_from_papperclip(count=50)
+        if fetched:
+            save_cache(fetched)
+            await save_to_supabase(fetched)
+            raw_targets = fetched
+            enriched_targets = [enrich_target(c) for c in fetched]
+            return {
+                "ok": True,
+                "total": len(enriched_targets),
+                "message": f"Refreshed {len(enriched_targets)} companies from Papperclip → Supabase",
+            }
+        raise HTTPException(500, "Papperclip returned no data")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Refresh failed: {e}")
 
 
 if __name__ == "__main__":
