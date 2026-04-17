@@ -21,9 +21,13 @@ Usage CLI :
 """
 
 import asyncio
+import csv
+import gzip
+import io
 import os
 import sys
 import time
+import urllib.request
 from datetime import datetime
 
 import httpx
@@ -43,6 +47,16 @@ except ImportError:
 # =============================================================================
 
 MOTHERDUCK_TOKEN = os.getenv("MOTHERDUCK_TOKEN", "")
+
+# Tracker de progression (accessible via /api/admin/bronze-stats)
+_PIPELINE_STATUS: dict = {
+    "running": False,
+    "step": "idle",
+    "rows_loaded": 0,
+    "error": None,
+    "started_at": None,
+    "finished_at": None,
+}
 DB_NAME          = "edrcf"          # base MotherDuck
 BRONZE_TABLE     = "bronze_sirene"  # 16M entités brutes
 SILVER_TABLE     = "silver_ma"      # ~50-80K PME/ETI éligibles
@@ -209,64 +223,85 @@ async def download_sirene(dest: str = LOCAL_GZ) -> str:
     return dest
 
 
+BRONZE_BATCH = 50_000   # lignes par INSERT batch
+
+
+def _parse_row(row: dict) -> tuple:
+    """Extrait les 9 colonnes utiles d'une ligne SIRENE brute."""
+    naf  = (row.get("activitePrincipaleUniteLegale") or "").replace(".", "")
+    dept = (row.get("codeCommuneEtablissementSiege") or "")[:2]
+    date_raw = row.get("dateCreationUniteLegale") or ""
+    date_val = date_raw[:10] if date_raw else None
+    return (
+        row.get("siren") or "",
+        row.get("denominationUniteLegale") or "",
+        naf,
+        dept,
+        row.get("trancheEffectifsUniteLegale") or "",
+        date_val,
+        row.get("categorieJuridiqueUniteLegale") or "",
+        row.get("categorieEntreprise") or "",
+        row.get("etatAdministratifUniteLegale") or "",
+    )
+
+
 def load_bronze(source: str | None = None) -> int:
     """
-    Charge les entités SIRENE dans Bronze via DuckDB.
-    Source : URL HTTP directe (pas de téléchargement local — économise le disque Render).
-    DuckDB streame le CSV.gz directement depuis data.gouv.fr via l'extension httpfs.
+    Charge toutes les entités SIRENE dans Bronze via streaming Python + batch INSERT.
+    Streame le CSV.gz depuis data.gouv.fr sans écrire de fichier temporaire.
+    Met à jour _PIPELINE_STATUS toutes les 500K lignes.
     Retourne le nombre de lignes insérées.
     """
+    global _PIPELINE_STATUS
     url = source or SIRENE_URL
     con = _get_connection()
 
-    # Activer l'extension httpfs pour lire depuis HTTP
-    con.execute("INSTALL httpfs; LOAD httpfs;")
+    _PIPELINE_STATUS.update({"step": "bronze_load", "rows_loaded": 0, "error": None})
 
-    print(f"[BRONZE] Vidage de la table existante…")
+    print(f"[BRONZE] Vidage table existante…")
     con.execute(f"DELETE FROM {BRONZE_TABLE}")
 
-    print(f"[BRONZE] Chargement depuis {url} → {BRONZE_TABLE} (stream direct, ~20-40 min)…")
-    t0 = time.time()
+    print(f"[BRONZE] Stream depuis {url} (batch {BRONZE_BATCH:,} lignes)…")
+    t0        = time.time()
+    total     = 0
+    batch     = []
+    last_log  = 0
 
-    con.execute(f"""
+    insert_sql = f"""
         INSERT INTO {BRONZE_TABLE}
             (siren, denomination, naf, dept, effectif_tranche,
              date_creation, categorie_juridique, categorie_entreprise,
              etat_administratif)
-        SELECT
-            siren                                                AS siren,
-            denominationUniteLegale                              AS denomination,
-            REPLACE(activitePrincipaleUniteLegale, '.', '')      AS naf,
-            LEFT(COALESCE(codeCommuneEtablissementSiege, ''), 2) AS dept,
-            trancheEffectifsUniteLegale                          AS effectif_tranche,
-            TRY_CAST(dateCreationUniteLegale AS DATE)            AS date_creation,
-            categorieJuridiqueUniteLegale                        AS categorie_juridique,
-            categorieEntreprise                                  AS categorie_entreprise,
-            etatAdministratifUniteLegale                         AS etat_administratif
-        FROM read_csv(
-            '{url}',
-            delim         = ',',
-            header        = true,
-            ignore_errors = true,
-            compression   = 'gzip',
-            columns = {{
-                'siren':                                  'VARCHAR',
-                'denominationUniteLegale':                'VARCHAR',
-                'activitePrincipaleUniteLegale':          'VARCHAR',
-                'codeCommuneEtablissementSiege':          'VARCHAR',
-                'trancheEffectifsUniteLegale':            'VARCHAR',
-                'dateCreationUniteLegale':                'VARCHAR',
-                'categorieJuridiqueUniteLegale':          'VARCHAR',
-                'categorieEntreprise':                    'VARCHAR',
-                'etatAdministratifUniteLegale':           'VARCHAR'
-            }}
-        )
-    """)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+
+    # urllib.request + gzip.open() = stream nativement sans fichier temporaire
+    req = urllib.request.Request(url, headers={"User-Agent": "EdRCF/6.0"})
+    with urllib.request.urlopen(req, timeout=3600) as resp:
+        with gzip.open(resp, "rt", encoding="utf-8", errors="replace") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                batch.append(_parse_row(row))
+                if len(batch) >= BRONZE_BATCH:
+                    con.executemany(insert_sql, batch)
+                    total += len(batch)
+                    batch = []
+                    if total - last_log >= 500_000:
+                        elapsed = time.time() - t0
+                        print(f"  [BRONZE] {total:,} lignes — {elapsed/60:.1f} min")
+                        _PIPELINE_STATUS["rows_loaded"] = total
+                        last_log = total
+
+    # Flush dernier batch
+    if batch:
+        con.executemany(insert_sql, batch)
+        total += len(batch)
 
     count = con.execute(f"SELECT COUNT(*) FROM {BRONZE_TABLE}").fetchone()[0]
     elapsed = time.time() - t0
+    _PIPELINE_STATUS["rows_loaded"] = count
     con.close()
-    print(f"[BRONZE] ✅ {count:,} entités chargées en {elapsed/60:.1f} min.")
+    print(f"[BRONZE] ✅ {count:,} entités en {elapsed/60:.1f} min.")
     return count
 
 
@@ -504,9 +539,13 @@ async def api_bronze_stats() -> dict:
             "silver_eligible": silver,
             "silver_enriched": enriched,
             "silver_avg_score": avg_score,
+            "pipeline": _PIPELINE_STATUS,
         }
     except Exception as e:
-        return {"error": str(e)}
+        return {
+            "error": str(e),
+            "pipeline": _PIPELINE_STATUS,
+        }
 
 
 # =============================================================================

@@ -2571,18 +2571,30 @@ async def admin_load_bronze(
     _check_admin_secret(secret)
 
     async def _run_pipeline():
+        import bronze_pipeline as bp
+        bp._PIPELINE_STATUS.update({
+            "running": True, "step": "setup", "error": None,
+            "started_at": datetime.utcnow().isoformat(), "finished_at": None,
+        })
         try:
-            from bronze_pipeline import (
-                setup_tables, load_bronze,
-                build_silver, sync_silver_to_supabase
-            )
-            print("[ADMIN] Pipeline Bronze démarré (stream direct URL)…")
-            setup_tables()
-            load_bronze()   # stream depuis data.gouv.fr, pas de fichier local
-            build_silver()
-            await sync_silver_to_supabase(top_n=5000, priority="score")
+            print("[ADMIN] Pipeline Bronze démarré…")
+            bp.setup_tables()
+            bp._PIPELINE_STATUS["step"] = "bronze_load"
+            await asyncio.to_thread(bp.load_bronze)
+            bp._PIPELINE_STATUS["step"] = "silver_build"
+            await asyncio.to_thread(bp.build_silver)
+            bp._PIPELINE_STATUS["step"] = "sync_supabase"
+            await bp.sync_silver_to_supabase(top_n=5000, priority="score")
+            bp._PIPELINE_STATUS.update({
+                "running": False, "step": "done",
+                "finished_at": datetime.utcnow().isoformat(),
+            })
             print("[ADMIN] Pipeline Bronze terminé.")
         except Exception as e:
+            bp._PIPELINE_STATUS.update({
+                "running": False, "step": "error",
+                "error": str(e), "finished_at": datetime.utcnow().isoformat(),
+            })
             print(f"[ADMIN] Erreur pipeline Bronze: {e}")
 
     background_tasks.add_task(_run_pipeline)
