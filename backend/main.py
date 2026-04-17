@@ -2541,6 +2541,60 @@ def _supabase_headers_main() -> dict:
 
 
 # =============================================================================
+# /api/admin/bronze-stats — Stats DuckDB Bronze + Silver (MotherDuck)
+# =============================================================================
+
+@app.get("/api/admin/bronze-stats")
+async def admin_bronze_stats(secret: str = Query(default="")):
+    """Stats des couches Bronze (16M) et Silver (~50-80K) sur MotherDuck."""
+    _check_admin_secret(secret)
+    try:
+        from bronze_pipeline import api_bronze_stats
+        return await api_bronze_stats()
+    except Exception as e:
+        raise HTTPException(500, f"Erreur bronze-stats: {e}")
+
+
+@app.get("/api/admin/load-bronze")
+async def admin_load_bronze(
+    background_tasks: BackgroundTasks,
+    secret: str = Query(default=""),
+):
+    """
+    Lance le pipeline complet Bronze/Silver en arrière-plan :
+    1. Télécharge StockUniteLegale_utf8.csv.gz (~2.5 Go)
+    2. Charge les 16M entités dans DuckDB Bronze (MotherDuck)
+    3. Filtre les PME/ETI M&A-éligibles → Silver (~50-80K)
+    4. Synchronise le top-5000 Silver vers Supabase sirene_index
+    Durée estimée : 20-40 min selon la connexion.
+    """
+    _check_admin_secret(secret)
+
+    async def _run_pipeline():
+        try:
+            from bronze_pipeline import (
+                setup_tables, download_sirene, load_bronze,
+                build_silver, sync_silver_to_supabase
+            )
+            print("[ADMIN] Pipeline Bronze démarré…")
+            setup_tables()
+            gz = await download_sirene()
+            load_bronze(gz)
+            build_silver()
+            await sync_silver_to_supabase(top_n=5000, priority="score")
+            print("[ADMIN] Pipeline Bronze terminé.")
+        except Exception as e:
+            print(f"[ADMIN] Erreur pipeline Bronze: {e}")
+
+    background_tasks.add_task(_run_pipeline)
+    return {
+        "status": "started",
+        "message": "Pipeline Bronze/Silver lancé en arrière-plan (~20-40 min). "
+                   "Suivre la progression via /api/admin/bronze-stats",
+    }
+
+
+# =============================================================================
 # /api/admin/index-stats — Stats de sirene_index
 # =============================================================================
 
