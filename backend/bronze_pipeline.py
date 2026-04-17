@@ -64,8 +64,28 @@ SILVER_TABLE     = "silver_ma"      # ~50-80K PME/ETI éligibles
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
-SIRENE_URL   = "https://files.data.gouv.fr/insee-sirene/StockUniteLegale_utf8.csv.gz"
-LOCAL_GZ     = "/tmp/sirene_ul.csv.gz"
+SIRENE_URL_FALLBACK = "https://files.data.gouv.fr/insee-sirene/StockUniteLegale_utf8.csv.gz"
+DATAGOUV_API        = "https://www.data.gouv.fr/api/1/datasets/558dbb8c88ee386afc0c7d9b/"
+LOCAL_GZ            = "/tmp/sirene_ul.csv.gz"
+
+
+def get_sirene_url() -> str:
+    """Interroge l'API data.gouv.fr pour obtenir l'URL courante du fichier SIRENE.
+    Retourne l'URL du premier .gz trouvé, sinon l'URL de fallback."""
+    try:
+        req = urllib.request.Request(DATAGOUV_API, headers={"User-Agent": "EdRCF/6.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            import json as _json
+            data = _json.loads(resp.read())
+            for res in data.get("resources", []):
+                url   = res.get("url", "")
+                title = res.get("title", "").lower()
+                if "stockuniteleg" in title and url.endswith(".csv.gz"):
+                    print(f"[BRONZE] URL SIRENE trouvée : {url}")
+                    return url
+    except Exception as e:
+        print(f"[BRONZE] data.gouv.fr API error: {e} — fallback URL")
+    return SIRENE_URL_FALLBACK
 
 UPSERT_BATCH = 500   # lignes par appel Supabase
 
@@ -253,7 +273,7 @@ def load_bronze(source: str | None = None) -> int:
     Retourne le nombre de lignes insérées.
     """
     global _PIPELINE_STATUS
-    url = source or SIRENE_URL
+    url = source or get_sirene_url()
     con = _get_connection()
 
     _PIPELINE_STATUS.update({"step": "bronze_load", "rows_loaded": 0, "error": None})
