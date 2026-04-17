@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Activity, Bell, Filter, Search, ShieldAlert, ArrowUpRight, Clock, MapPin, Zap, TrendingUp, Globe, AlertCircle, Radio, ExternalLink, ChevronDown, ChevronUp, Hash } from "lucide-react";
+import { Activity, Bell, Filter, Search, ShieldAlert, ArrowUpRight, Clock, MapPin, Zap, TrendingUp, Globe, AlertCircle, Radio, ExternalLink, ChevronDown, ChevronUp, Hash, Download, BellRing } from "lucide-react";
 import Link from "next/link";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
@@ -49,6 +49,7 @@ const DIMENSION_FR: Record<string, string> = {
 export default function SignalsPage() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All");
+  const [dimensionFilter, setDimensionFilter] = useState("All");
   const [signals, setSignals] = useState<Signal[]>([]);
   const [catalog, setCatalog] = useState<Record<string, SignalCatalogEntry[]>>({});
   const [loading, setLoading] = useState(true);
@@ -112,9 +113,40 @@ export default function SignalsPage() {
                           s.type.toLowerCase().includes(search.toLowerCase()) ||
                           (s.target_name || "").toLowerCase().includes(search.toLowerCase());
       const matchFilter = filter === "All" || s.severity === filter.toLowerCase();
-      return matchSearch && matchFilter;
+      const matchDimension = dimensionFilter === "All" || (s.dimension || s.type) === dimensionFilter;
+      return matchSearch && matchFilter && matchDimension;
     });
-  }, [search, filter, signals]);
+  }, [search, filter, dimensionFilter, signals]);
+
+  const handleExportSignals = () => {
+    if (filteredSignals.length === 0) return;
+    const date = new Date().toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
+    const lines = [
+      `EDRCF 6.0 — Rapport Intelligence Signaux`,
+      `Généré le ${date}`,
+      `${filteredSignals.length} signaux | Filtre: ${filter} | Dimension: ${DIMENSION_FR[dimensionFilter] || dimensionFilter}`,
+      `${"─".repeat(60)}`,
+      "",
+    ];
+    filteredSignals.forEach((s, i) => {
+      lines.push(`[${i + 1}] ${s.title}`);
+      lines.push(`    Sévérité : ${SEVERITY_FR[s.severity] || s.severity} | Dimension : ${DIMENSION_FR[s.dimension || ""] || s.dimension || s.type}`);
+      if (s.target_name) lines.push(`    Cible    : ${s.target_name}`);
+      lines.push(`    Source   : ${s.source}${s.source_url ? ` (${s.source_url})` : ""}`);
+      if (s.points !== undefined) lines.push(`    Score    : +${s.points} pts`);
+      lines.push(`    Date     : ${s.time}`);
+      lines.push("");
+    });
+    lines.push(`${"─".repeat(60)}`);
+    lines.push(`© Edmond de Rothschild Corporate Finance — EDRCF 6.0`);
+    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `EDRCF_Signaux_${new Date().toISOString().slice(0, 10)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const catalogEntries = useMemo(() => {
     const entries: SignalCatalogEntry[] = [];
@@ -154,11 +186,15 @@ export default function SignalsPage() {
                value={search}
                onChange={(e) => setSearch(e.target.value)}
                placeholder="Rechercher un signal, une cible..."
-               className="w-full bg-white/[0.03] border border-white/10 rounded-2xl py-3 pl-12 pr-4 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-indigo-500/50 focus:bg-white/[0.05] transition-all"
+               className="w-full bg-white/3 border border-white/10 rounded-2xl py-3 pl-12 pr-4 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-indigo-500/50 focus:bg-white/5 transition-all"
             />
           </div>
-          <button className="px-5 py-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[10px] font-black uppercase tracking-widest text-white hover:bg-white/10 transition-all flex items-center justify-center gap-2">
-            <AlertCircle size={16} /> <span className="sm:hidden lg:inline">Alertes</span>
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent("edrcf-request-notif"))}
+            className="px-5 py-3 rounded-2xl bg-white/3 border border-white/10 text-[10px] font-black uppercase tracking-widest text-white hover:bg-indigo-600 hover:border-indigo-500 transition-all flex items-center justify-center gap-2 active:scale-95"
+            title="Activer les notifications push"
+          >
+            <BellRing size={16} /> <span className="sm:hidden lg:inline">Alertes</span>
           </button>
         </div>
       </header>
@@ -167,8 +203,10 @@ export default function SignalsPage() {
 
         {/* Main Feed */}
         <div className="lg:col-span-8 bg-black/40 border border-white/10 rounded-2xl sm:rounded-[2rem] lg:rounded-[2.5rem] overflow-hidden flex flex-col shadow-2xl backdrop-blur-xl">
-          <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-white/10 flex items-center justify-between bg-white/[0.02] flex-wrap gap-2">
-             <div className="flex gap-2 flex-wrap">
+          <div className="px-4 py-3 sm:px-5 border-b border-white/10 bg-white/[0.02] flex flex-col gap-2">
+            {/* Severity row */}
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex gap-1.5 flex-wrap">
                 {[
                   { key: "All", label: "Tous", count: severityCounts.all },
                   { key: "High", label: "Haute", count: severityCounts.high },
@@ -178,7 +216,7 @@ export default function SignalsPage() {
                   <button
                     key={lvl.key}
                     onClick={() => setFilter(lvl.key)}
-                    className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border flex items-center gap-2
+                    className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border flex items-center gap-1.5
                       ${filter === lvl.key
                         ? "bg-indigo-500/10 border-indigo-500/30 text-indigo-400"
                         : "bg-white/5 border-transparent text-gray-500 hover:bg-white/10 hover:text-gray-300"
@@ -191,10 +229,34 @@ export default function SignalsPage() {
                     </span>
                   </button>
                 ))}
-             </div>
-             <div className="text-[10px] font-black text-gray-600 uppercase tracking-widest">
-                {signals.length} signaux detectes
-             </div>
+              </div>
+              <div className="text-[10px] font-black text-gray-600 uppercase tracking-widest">
+                {filteredSignals.length}/{signals.length} signaux
+              </div>
+            </div>
+            {/* Dimension row */}
+            {Object.keys(dimensionCounts).length > 0 && (
+              <div className="flex gap-1.5 flex-wrap">
+                <button
+                  onClick={() => setDimensionFilter("All")}
+                  className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all border
+                    ${dimensionFilter === "All" ? "bg-purple-500/10 border-purple-500/20 text-purple-400" : "border-transparent text-gray-600 hover:text-gray-400"}`}
+                >
+                  Toutes dimensions
+                </button>
+                {Object.entries(dimensionCounts).sort((a,b) => b[1]-a[1]).map(([dim, cnt]) => (
+                  <button
+                    key={dim}
+                    onClick={() => setDimensionFilter(dimensionFilter === dim ? "All" : dim)}
+                    className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all border flex items-center gap-1
+                      ${dimensionFilter === dim ? "bg-purple-500/10 border-purple-500/20 text-purple-400" : "border-transparent text-gray-600 hover:text-gray-400"}`}
+                  >
+                    {DIMENSION_FR[dim] || dim}
+                    <span className="text-[8px] opacity-60">{cnt}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6 space-y-3 sm:space-y-4 custom-scrollbar">
@@ -384,7 +446,7 @@ export default function SignalsPage() {
              <div className="space-y-4">
                 {Object.entries(dimensionCounts).length > 0 ? (
                   Object.entries(dimensionCounts).sort((a, b) => b[1] - a[1]).map(([dim, count]) => (
-                    <div key={dim} className="flex items-center justify-between p-3 rounded-2xl bg-white/[0.03] border border-white/5 hover:border-indigo-500/20 transition-all group">
+                    <div key={dim} className="flex items-center justify-between p-3 rounded-2xl bg-white/3 border border-white/5 hover:border-indigo-500/20 transition-all group">
                       <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest group-hover:text-white transition-colors">
                         {DIMENSION_FR[dim] || dim}
                       </span>
@@ -421,7 +483,7 @@ export default function SignalsPage() {
                 >
                   <div className="space-y-3 mt-6 max-h-[400px] overflow-y-auto custom-scrollbar pr-1">
                     {catalogEntries.length > 0 ? catalogEntries.map((entry, i) => (
-                      <div key={entry.id || i} className="p-4 rounded-2xl bg-white/[0.03] border border-white/5 hover:border-indigo-500/20 transition-all">
+                      <div key={entry.id || i} className="p-4 rounded-2xl bg-white/3 border border-white/5 hover:border-indigo-500/20 transition-all">
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">
                             {DIMENSION_FR[entry.dimension] || entry.dimension}
@@ -451,8 +513,12 @@ export default function SignalsPage() {
             </AnimatePresence>
           </div>
 
-          <button className="w-full py-4 rounded-3xl bg-indigo-600 text-white font-black text-[10px] uppercase tracking-widest hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-600/20 active:scale-95">
-             Telecharger le Rapport d&apos;Intelligence
+          <button
+            onClick={handleExportSignals}
+            disabled={filteredSignals.length === 0}
+            className="w-full py-4 rounded-3xl bg-indigo-600 text-white font-black text-[10px] uppercase tracking-widest hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-600/20 active:scale-95 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Download size={14} /> Télécharger le Rapport ({filteredSignals.length})
           </button>
         </div>
 

@@ -217,6 +217,49 @@ export default function TargetsPage() {
   const structures = apiFilters?.structures || ["Familiale", "PE-backed", "Groupe côté"];
   const ebitdaRanges = apiFilters?.ebitda_ranges || ["< 3M", "3-10M", "10-30M", "> 30M"];
 
+  const handleExportCSV = () => {
+    if (filteredAndSortedTargets.length === 0) return;
+    const escape = (v: string | number | undefined | null) => {
+      const s = String(v ?? "");
+      return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const headers = [
+      "Entité", "SIREN", "Secteur", "Sous-secteur", "Région", "Ville",
+      "Structure", "Publication", "Score", "Priorité",
+      "Type M&A", "Fenêtre", "CA", "EBITDA", "Marge EBITDA", "Effectif",
+      "Signaux actifs", "Dirigeant principal", "Relation EDR (%)",
+    ];
+    const rows = filteredAndSortedTargets.map(t => [
+      t.name,
+      t.siren,
+      t.sector,
+      t.sub_sector || "",
+      t.region || "",
+      t.city || "",
+      t.structure || "",
+      t.publication_status || "",
+      t.globalScore,
+      t.priorityLevel,
+      t.analysis?.type || "",
+      t.analysis?.window || "",
+      t.financials?.revenue || "",
+      t.financials?.ebitda || "",
+      t.financials?.ebitda_margin || "",
+      t.financials?.effectif ?? "",
+      t.topSignals?.length ?? 0,
+      t.dirigeants?.[0]?.name || "",
+      t.relationship?.strength ?? "",
+    ]);
+    const csv = [headers, ...rows].map(r => r.map(escape).join(",")).join("\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `EDRCF_Intelligence_Vault_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="flex flex-col gap-5 sm:gap-6 lg:gap-8 w-full py-4 h-[calc(100dvh-5rem)] sm:h-[calc(100dvh-6rem)]">
 
@@ -532,9 +575,12 @@ export default function TargetsPage() {
                 )}
               </button>
               <button
-                className="flex-1 sm:flex-none px-3 py-2.5 rounded-xl bg-white/[0.03] border border-white/10 text-gray-400 hover:text-indigo-400 hover:bg-indigo-500/10 hover:border-indigo-500/20 transition-all flex items-center justify-center gap-2 text-[10px] font-black uppercase tracking-wider"
+                onClick={handleExportCSV}
+                disabled={filteredAndSortedTargets.length === 0}
+                className="flex-1 sm:flex-none px-3 py-2.5 rounded-xl bg-white/[0.03] border border-white/10 text-gray-400 hover:text-indigo-400 hover:bg-indigo-500/10 hover:border-indigo-500/20 transition-all flex items-center justify-center gap-2 text-[10px] font-black uppercase tracking-wider disabled:opacity-30 disabled:cursor-not-allowed"
+                title={`Exporter ${filteredAndSortedTargets.length} cibles en CSV`}
               >
-                <Download size={15} /> <span className="hidden sm:inline">Export</span>
+                <Download size={15} /> <span className="hidden sm:inline">Export CSV</span>
               </button>
             </div>
           </div>
