@@ -99,12 +99,14 @@ def _fetch_sirene_urls() -> dict:
 
 def get_sirene_urls() -> tuple[str, str]:
     """Retourne (ul_url, etab_url) pour les fichiers Parquet SIRENE.
-    ul_url   → StockUniteLegale  (siren, 16M)
-    etab_url → StockEtablissement (siret, ~30M) — utilisé uniquement pour extraire le dept du siège
+    ul_url   → StockUniteLegale  (siren, ~29M)
+    etab_url → StockEtablissement (siret, ~35M) — uniquement pour extraire le dept du siège
+    L'URL etab est toujours hardcodée : l'API data.gouv.fr peut renvoyer
+    StockEtablissementLiensSuccession (schéma incompatible) avant le fichier principal.
     """
     urls = _fetch_sirene_urls()
-    ul_url   = urls.get("ul",   SIRENE_UL_PARQUET_FALLBACK)
-    etab_url = urls.get("etab", SIRENE_ETAB_PARQUET_FALLBACK)
+    ul_url   = urls.get("ul", SIRENE_UL_PARQUET_FALLBACK)
+    etab_url = SIRENE_ETAB_PARQUET_FALLBACK   # toujours hardcodée — URL confirmée
     return ul_url, etab_url
 
 UPSERT_BATCH = 500   # lignes par appel Supabase
