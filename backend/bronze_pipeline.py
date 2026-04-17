@@ -209,18 +209,23 @@ async def download_sirene(dest: str = LOCAL_GZ) -> str:
     return dest
 
 
-def load_bronze(gz_path: str = LOCAL_GZ) -> int:
+def load_bronze(source: str | None = None) -> int:
     """
-    Charge le fichier SIRENE CSV.gz dans la table Bronze via DuckDB.
-    DuckDB lit directement le .gz sans décompresser manuellement.
+    Charge les entités SIRENE dans Bronze via DuckDB.
+    Source : URL HTTP directe (pas de téléchargement local — économise le disque Render).
+    DuckDB streame le CSV.gz directement depuis data.gouv.fr via l'extension httpfs.
     Retourne le nombre de lignes insérées.
     """
+    url = source or SIRENE_URL
     con = _get_connection()
+
+    # Activer l'extension httpfs pour lire depuis HTTP
+    con.execute("INSTALL httpfs; LOAD httpfs;")
 
     print(f"[BRONZE] Vidage de la table existante…")
     con.execute(f"DELETE FROM {BRONZE_TABLE}")
 
-    print(f"[BRONZE] Chargement {gz_path} → {BRONZE_TABLE} (peut prendre 10-20 min)…")
+    print(f"[BRONZE] Chargement depuis {url} → {BRONZE_TABLE} (stream direct, ~20-40 min)…")
     t0 = time.time()
 
     con.execute(f"""
@@ -239,7 +244,7 @@ def load_bronze(gz_path: str = LOCAL_GZ) -> int:
             categorieEntreprise                                  AS categorie_entreprise,
             etatAdministratifUniteLegale                         AS etat_administratif
         FROM read_csv(
-            '{gz_path}',
+            '{url}',
             delim         = ',',
             header        = true,
             ignore_errors = true,

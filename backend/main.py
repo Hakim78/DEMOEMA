@@ -2573,13 +2573,12 @@ async def admin_load_bronze(
     async def _run_pipeline():
         try:
             from bronze_pipeline import (
-                setup_tables, download_sirene, load_bronze,
+                setup_tables, load_bronze,
                 build_silver, sync_silver_to_supabase
             )
-            print("[ADMIN] Pipeline Bronze démarré…")
+            print("[ADMIN] Pipeline Bronze démarré (stream direct URL)…")
             setup_tables()
-            gz = await download_sirene()
-            load_bronze(gz)
+            load_bronze()   # stream depuis data.gouv.fr, pas de fichier local
             build_silver()
             await sync_silver_to_supabase(top_n=5000, priority="score")
             print("[ADMIN] Pipeline Bronze terminé.")
