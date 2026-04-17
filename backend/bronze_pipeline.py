@@ -246,7 +246,7 @@ def load_bronze(source: str | None = None) -> int:
             denominationUniteLegale                                 AS denomination,
             REPLACE(COALESCE(activitePrincipaleUniteLegale,''),'.',''
                                                                     ) AS naf,
-            LEFT(COALESCE(codeCommuneEtablissementSiege,''), 2)     AS dept,
+            NULL                                                     AS dept,
             trancheEffectifsUniteLegale                             AS effectif_tranche,
             TRY_CAST(dateCreationUniteLegale AS DATE)               AS date_creation,
             categorieJuridiqueUniteLegale                           AS categorie_juridique,
