@@ -91,15 +91,30 @@ ELIGIBLE_CJ: set[str] = {
 # Connexion DuckDB / MotherDuck
 # =============================================================================
 
+def _ensure_database() -> None:
+    """Crée la base MotherDuck 'edrcf' si elle n'existe pas encore."""
+    if not _DUCKDB_OK or not MOTHERDUCK_TOKEN:
+        return
+    try:
+        con = duckdb.connect(f"md:?motherduck_token={MOTHERDUCK_TOKEN}")
+        con.execute(f"CREATE DATABASE IF NOT EXISTS {DB_NAME}")
+        con.close()
+        print(f"[DuckDB] Base '{DB_NAME}' prête sur MotherDuck.")
+    except Exception as e:
+        print(f"[DuckDB] _ensure_database warning: {e}")
+
+
 def _get_connection(local_fallback: bool = False):
     """Retourne une connexion DuckDB.
     - Si MOTHERDUCK_TOKEN défini → connexion MotherDuck cloud
     - Sinon → fichier local edrcf.duckdb (développement)
+    Crée automatiquement la base si elle n'existe pas.
     """
     if not _DUCKDB_OK:
         raise RuntimeError("duckdb non installé. Exécuter : pip install duckdb")
 
     if MOTHERDUCK_TOKEN and not local_fallback:
+        _ensure_database()
         conn_str = f"md:{DB_NAME}?motherduck_token={MOTHERDUCK_TOKEN}"
         print(f"[DuckDB] Connexion MotherDuck : md:{DB_NAME}")
     else:
