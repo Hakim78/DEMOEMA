@@ -17,9 +17,20 @@ const nextConfig: NextConfig = {
     ignoreDuringBuilds: true,
   },
   async rewrites() {
-    // Only proxy to localhost in development.
-    // In production (Vercel), vercel.json handles /api/* routing.
+    // En dev : proxy vers FastAPI local.
+    // En prod :
+    //   - Vercel : vercel.json gère le routing (pas de rewrite ici).
+    //   - Cloudflare Workers / autre : utiliser BACKEND_URL pour cibler
+    //     le backend FastAPI hébergé séparément (VPS, Vercel, etc.).
     if (process.env.NODE_ENV === "production") {
+      if (process.env.BACKEND_URL) {
+        return [
+          {
+            source: "/api/:path*",
+            destination: `${process.env.BACKEND_URL}/api/:path*`,
+          },
+        ];
+      }
       return [];
     }
     return [
