@@ -48,6 +48,7 @@ except ImportError:
 # =============================================================================
 
 MOTHERDUCK_TOKEN = os.getenv("MOTHERDUCK_TOKEN", "")
+MOTHERDUCK_PG_HOST = "pg.eu-central-1-aws.motherduck.com"
 
 # Tracker de progression (accessible via /api/admin/bronze-stats)
 _PIPELINE_STATUS: dict = {
@@ -1076,28 +1077,66 @@ def print_stats() -> None:
 # Endpoints FastAPI (importés dans main.py)
 # =============================================================================
 
+def _pg_stats() -> dict | None:
+    """Connexion stats via MotherDuck Postgres endpoint (bypass JWT DuckDB)."""
+    if not MOTHERDUCK_TOKEN:
+        return None
+    try:
+        import psycopg2
+        conn = psycopg2.connect(
+            host=MOTHERDUCK_PG_HOST, port=5432, user="postgres",
+            password=MOTHERDUCK_TOKEN, dbname=DB_NAME, sslmode="require",
+            connect_timeout=15,
+        )
+        cur = conn.cursor()
+        def q(sql):
+            cur.execute(sql); return cur.fetchone()[0]
+        bronze   = q(f"SELECT COUNT(*) FROM {BRONZE_TABLE}")
+        silver   = q(f"SELECT COUNT(*) FROM {SILVER_TABLE}")
+        enriched = q(f"SELECT COUNT(*) FROM {SILVER_TABLE} WHERE enriched = true")
+        avg_score = q(f"SELECT ROUND(AVG(ma_score)::numeric, 1) FROM {SILVER_TABLE}")
+        bodacc_total = bodacc_flagged = pappers_total = 0
+        try:
+            bodacc_total  = q(f"SELECT COUNT(*) FROM {BODACC_TABLE}")
+            bodacc_flagged = q(f"SELECT COUNT(*) FROM {SILVER_TABLE} WHERE bodacc_recent = true")
+        except Exception:
+            pass
+        try:
+            pappers_total = q(f"SELECT COUNT(*) FROM {PAPPERS_TABLE}")
+        except Exception:
+            pass
+        cur.close(); conn.close()
+        return {
+            "bronze_total": bronze, "silver_eligible": silver,
+            "silver_enriched": enriched, "silver_avg_score": avg_score,
+            "bodacc_total": bodacc_total, "bodacc_flagged_silver": bodacc_flagged,
+            "pappers_total": pappers_total,
+        }
+    except Exception as e:
+        print(f"[Stats] Postgres MotherDuck failed: {e}")
+        return None
+
+
 async def api_bronze_stats() -> dict:
     """Utilisé par GET /api/admin/bronze-stats."""
+    # Priorité : Postgres endpoint (contourne le bug JWT DuckDB extension)
+    pg = await asyncio.to_thread(_pg_stats)
+    if pg:
+        return {**pg, "pipeline": _PIPELINE_STATUS}
+
+    # Fallback DuckDB local
     if not _DUCKDB_OK:
-        return {"error": "duckdb non installé"}
+        return {"error": "duckdb non installé", "pipeline": _PIPELINE_STATUS}
     try:
         con = _get_connection()
-        bronze = con.execute(f"SELECT COUNT(*) FROM {BRONZE_TABLE}").fetchone()[0]
-        silver = con.execute(f"SELECT COUNT(*) FROM {SILVER_TABLE}").fetchone()[0]
-        enriched = con.execute(
-            f"SELECT COUNT(*) FROM {SILVER_TABLE} WHERE enriched = true"
-        ).fetchone()[0]
-        avg_score = con.execute(
-            f"SELECT ROUND(AVG(ma_score)) FROM {SILVER_TABLE}"
-        ).fetchone()[0]
-        bodacc_total = 0
-        bodacc_recent_flagged = 0
-        pappers_total = 0
+        bronze   = con.execute(f"SELECT COUNT(*) FROM {BRONZE_TABLE}").fetchone()[0]
+        silver   = con.execute(f"SELECT COUNT(*) FROM {SILVER_TABLE}").fetchone()[0]
+        enriched = con.execute(f"SELECT COUNT(*) FROM {SILVER_TABLE} WHERE enriched = true").fetchone()[0]
+        avg_score = con.execute(f"SELECT ROUND(AVG(ma_score)) FROM {SILVER_TABLE}").fetchone()[0]
+        bodacc_total = bodacc_flagged = pappers_total = 0
         try:
-            bodacc_total = con.execute(f"SELECT COUNT(*) FROM {BODACC_TABLE}").fetchone()[0]
-            bodacc_recent_flagged = con.execute(
-                f"SELECT COUNT(*) FROM {SILVER_TABLE} WHERE bodacc_recent = true"
-            ).fetchone()[0]
+            bodacc_total  = con.execute(f"SELECT COUNT(*) FROM {BODACC_TABLE}").fetchone()[0]
+            bodacc_flagged = con.execute(f"SELECT COUNT(*) FROM {SILVER_TABLE} WHERE bodacc_recent = true").fetchone()[0]
         except Exception:
             pass
         try:
@@ -1106,20 +1145,13 @@ async def api_bronze_stats() -> dict:
             pass
         con.close()
         return {
-            "bronze_total": bronze,
-            "silver_eligible": silver,
-            "silver_enriched": enriched,
-            "silver_avg_score": avg_score,
-            "bodacc_total": bodacc_total,
-            "bodacc_flagged_silver": bodacc_recent_flagged,
-            "pappers_total": pappers_total,
-            "pipeline": _PIPELINE_STATUS,
+            "bronze_total": bronze, "silver_eligible": silver,
+            "silver_enriched": enriched, "silver_avg_score": avg_score,
+            "bodacc_total": bodacc_total, "bodacc_flagged_silver": bodacc_flagged,
+            "pappers_total": pappers_total, "pipeline": _PIPELINE_STATUS,
         }
     except Exception as e:
-        return {
-            "error": str(e),
-            "pipeline": _PIPELINE_STATUS,
-        }
+        return {"error": str(e), "pipeline": _PIPELINE_STATUS}
 
 
 # =============================================================================
