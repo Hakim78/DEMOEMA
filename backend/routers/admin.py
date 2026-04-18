@@ -97,7 +97,11 @@ async def load_bodacc(
         })
         try:
             bp.setup_tables()
-            await asyncio.to_thread(bp.load_bodacc, since)
+            total = await asyncio.to_thread(bp.load_bodacc_dila, since)
+            if total == 0:
+                print("[ADMIN] DILA vide — fallback ODS JSON paginé…")
+                total = await bp._load_bodacc_ods(since)
+            print(f"[ADMIN] BODACC chargé: {total:,} lignes")
             bp._PIPELINE_STATUS["step"] = "bodacc_flag"
             await asyncio.to_thread(bp.flag_bodacc_silver)
             bp._PIPELINE_STATUS.update({

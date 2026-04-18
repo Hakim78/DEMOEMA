@@ -738,82 +738,128 @@ def load_bodacc_dila(since: str = "2023-01-01") -> int:
     return total_inserted
 
 
-def _load_bodacc_ods(since: str = "2023-01-01") -> int:
-    """Fallback OpenDataSoft CSV : stream → /tmp → DuckDB bulk-load."""
-    since_enc = since.replace("-", "%2D")
-    csv_url = (
-        f"{_BODACC_ODS_BASE}"
-        f"%20AND%20dateparution%20%3E%3D%20%27{since_enc}%27"
+_ODS_JSON_BASE = (
+    "https://bodacc-datadila.opendatasoft.com/api/explore/v2.1/catalog/datasets"
+    "/annonces-commerciales/records"
+)
+_ODS_PAGE_SIZE = 100   # max autorisé par l'API ODS v2.1
+_ODS_CONCURRENT = 10   # requêtes parallèles
+_ODS_COMMIT_EVERY = 2_000  # lignes avant commit MotherDuck
+
+
+async def _load_bodacc_ods(since: str = "2023-01-01") -> int:
+    """Chargement BODACC via API JSON paginée ODS (robuste, pas de gros fichier)."""
+    import re as _re
+
+    where = (
+        f"familleavis IN ('vente','collective')"
+        f" AND dateparution >= '{since}'"
     )
-    tmp_path = "/tmp/bodacc_ods.csv"
-    print(f"[BODACC ODS] Téléchargement CSV (≥{since})…")
-    try:
-        downloaded = 0
-        with httpx.Client(timeout=None, follow_redirects=True,
-                          headers={"User-Agent": "EdRCF/6.0"}) as client:
-            with client.stream("GET", csv_url) as resp:
-                resp.raise_for_status()
-                with open(tmp_path, "wb") as fp:
-                    for chunk in resp.iter_bytes(131_072):
-                        fp.write(chunk)
-                        downloaded += len(chunk)
-                        if downloaded % 20_000_000 < 131_072:
-                            print(f"[BODACC ODS] {downloaded/1e6:.0f} MB…")
-        print(f"[BODACC ODS] {os.path.getsize(tmp_path)/1e6:.1f} MB téléchargés")
-    except Exception as e:
-        print(f"[BODACC ODS] ERREUR download: {e}")
-        _PIPELINE_STATUS["error"] = f"BODACC ODS: {str(e)[:200]}"
+    params_base = {
+        "limit": _ODS_PAGE_SIZE,
+        "where": where,
+        "select": "registre,familleavis,dateparution,commercant",
+        "timezone": "UTC",
+    }
+
+    # 1. Récupère le total
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True,
+                                  headers={"User-Agent": "EdRCF/6.0"}) as client:
+        r = await client.get(_ODS_JSON_BASE, params={**params_base, "limit": 1})
+        r.raise_for_status()
+        total_count = r.json().get("total_count", 0)
+
+    print(f"[BODACC ODS] {total_count:,} annonces à charger depuis {since}…")
+    if total_count == 0:
         return 0
 
-    total = 0
-    con = _get_connection()
-    try:
-        con.execute(f"DELETE FROM {BODACC_TABLE}")
-        con.execute(f"""
-            INSERT INTO {BODACC_TABLE} (siren, type_annonce, date_parution, denomination)
-            SELECT
-                REGEXP_EXTRACT(
-                    REGEXP_REPLACE(COALESCE(registre, ''), '[^0-9,]', ''),
-                    '(\\d{{9}})', 1
-                )                                          AS siren,
-                CASE familleavis
-                    WHEN 'vente'      THEN 'VENTE'
-                    WHEN 'collective' THEN 'PROCOL'
-                    ELSE                   'AUTRE'
-                END                                        AS type_annonce,
-                TRY_CAST(dateparution AS DATE)             AS date_parution,
-                COALESCE(commercant, '')                   AS denomination
-            FROM read_csv_auto('{tmp_path}', delim=';', header=true,
-                               ignore_errors=true, nullstr='')
-            WHERE REGEXP_EXTRACT(
-                      REGEXP_REPLACE(COALESCE(registre, ''), '[^0-9,]', ''),
-                      '(\\d{{9}})', 1
-                  ) != ''
-        """)
-        total = con.execute(f"SELECT COUNT(*) FROM {BODACC_TABLE}").fetchone()[0]
-        print(f"[BODACC ODS] ✅ {total:,} annonces chargées depuis {since}.")
-    except Exception as e:
-        print(f"[BODACC ODS] ERREUR bulk-load: {e}")
-        _PIPELINE_STATUS["error"] = f"BODACC ODS bulk-load: {str(e)[:200]}"
-    finally:
-        con.close()
+    offsets = range(0, total_count, _ODS_PAGE_SIZE)
+    total_inserted = 0
+    buffer: list[tuple] = []
+    semaphore = asyncio.Semaphore(_ODS_CONCURRENT)
+
+    def _flush(rows: list[tuple]) -> int:
+        if not rows:
+            return 0
+        con = _get_connection()
         try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-    return total
+            con.executemany(
+                f"INSERT OR IGNORE INTO {BODACC_TABLE} "
+                f"(siren, type_annonce, date_parution, denomination) VALUES (?,?,?,?)",
+                rows,
+            )
+            return len(rows)
+        finally:
+            con.close()
+
+    async def _fetch_page(offset: int) -> list[tuple]:
+        async with semaphore:
+            for attempt in range(3):
+                try:
+                    async with httpx.AsyncClient(
+                        timeout=30, follow_redirects=True,
+                        headers={"User-Agent": "EdRCF/6.0"},
+                    ) as c:
+                        r = await c.get(_ODS_JSON_BASE, params={**params_base, "offset": offset})
+                        r.raise_for_status()
+                        rows = []
+                        for rec in r.json().get("results", []):
+                            registre = rec.get("registre") or []
+                            siren = next(
+                                (s for s in registre if _re.fullmatch(r"\d{9}", s)),
+                                None,
+                            )
+                            if not siren:
+                                continue
+                            type_av = "VENTE" if rec.get("familleavis") == "vente" else "PROCOL"
+                            date_p = rec.get("dateparution")
+                            denom = (rec.get("commercant") or "")[:200]
+                            rows.append((siren, type_av, date_p, denom))
+                        return rows
+                except Exception as e:
+                    if attempt == 2:
+                        print(f"[BODACC ODS] Offset {offset} échoué: {e}")
+                    await asyncio.sleep(2 ** attempt)
+        return []
+
+    tasks = [_fetch_page(off) for off in offsets]
+    done = 0
+    for coro in asyncio.as_completed(tasks):
+        rows = await coro
+        buffer.extend(rows)
+        done += 1
+        if len(buffer) >= _ODS_COMMIT_EVERY:
+            total_inserted += _flush(buffer)
+            buffer.clear()
+            print(f"[BODACC ODS] {total_inserted:,} / ~{total_count:,} ({done}/{len(tasks)} pages)")
+
+    if buffer:
+        total_inserted += _flush(buffer)
+
+    print(f"[BODACC ODS] ✅ {total_inserted:,} annonces chargées (≥{since}).")
+    return total_inserted
 
 
 def load_bodacc(since: str = "2023-01-01") -> int:
     """
     Charge les annonces BODACC : essaie DILA (archives annuelles tar.gz) en premier,
-    puis fallback OpenDataSoft CSV si DILA échoue.
+    puis fallback OpenDataSoft JSON paginé si DILA échoue.
     """
-    print(f"[BODACC] Chargement depuis DILA (primaire) puis ODS (fallback)…")
+    print(f"[BODACC] Chargement depuis DILA (primaire) puis ODS JSON (fallback)…")
     total = load_bodacc_dila(since=since)
     if total == 0:
-        print("[BODACC] DILA n'a rien retourné — fallback OpenDataSoft…")
-        total = _load_bodacc_ods(since=since)
+        print("[BODACC] DILA n'a rien retourné — fallback OpenDataSoft JSON paginé…")
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(1) as pool:
+                    future = pool.submit(asyncio.run, _load_bodacc_ods(since))
+                    total = future.result()
+            else:
+                total = loop.run_until_complete(_load_bodacc_ods(since))
+        except Exception as e:
+            print(f"[BODACC ODS] Erreur: {e}")
     return total
 
 
