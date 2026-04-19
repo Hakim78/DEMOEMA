@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, Target, Network, Layers, Activity,
   Search, Sparkles, Zap, ShieldCheck, Settings,
-  ChevronRight, Fingerprint, Bell, BellOff, Download, Map,
+  ChevronRight, Fingerprint, Bell, BellOff, Download, Map, BarChart2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -43,6 +43,7 @@ export default function Sidebar({
     { label: "Pipeline M&A", icon: Layers, href: "/pipeline", badge: null },
     { label: "Signaux Marché", icon: Activity, href: "/signals", badge: signalCount > 0 ? signalCount : null },
     { label: "Carte Opportunités", icon: Map, href: "/map", badge: null },
+    { label: "Analytics", icon: BarChart2, href: "/analytics", badge: null },
   ];
 
   const notifGranted = notifPermission === "granted";
