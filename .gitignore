@@ -48,3 +48,11 @@ env/
 Build/
 dist/
 *.egg-info/
+
+# DEMOEMA agents platform
+.mcp.json
+infrastructure/agents/.env
+infrastructure/agents/**/.env
+backups/
+*.dump
+/root/backups/
