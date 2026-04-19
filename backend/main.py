@@ -11,12 +11,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any, Optional
 import asyncio
 import copy
 import json
+from datetime import datetime
 import re
 import urllib.parse
 import xml.etree.ElementTree as ET
@@ -26,7 +27,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from demo_data import SIGNAL_CATALOG, DEFAULT_SCORING_WEIGHTS, SECTORS_HEAT
-from pappers_loader import load_targets_from_pappers, load_cache, save_cache, build_target, detect_signals
+from pappers_loader import load_cache, save_cache, build_target, detect_signals, load_from_supabase, save_to_supabase
+from data_sources import (
+    get_full_company_info as _papperclip_get_company,
+    search_companies_gouv as _papperclip_search,
+    load_targets_from_papperclip,
+)
 
 
 # ==========================================================================
@@ -120,19 +126,29 @@ def _load_targets_sync():
 @asynccontextmanager
 async def lifespan(app):
     global enriched_targets, raw_targets
-    _load_targets_sync()
 
-    # Try to fetch from Pappers in background if no cache
-    if not enriched_targets and PAPPERS_MCP_URL:
+    # 1. Supabase first — persistent, survives cold starts (fast)
+    db_targets = await load_from_supabase()
+    if db_targets:
+        raw_targets = db_targets
+        enriched_targets = [enrich_target(c) for c in db_targets]
+        print(f"[EdRCF] Loaded {len(enriched_targets)} targets from Supabase")
+    else:
+        # 2. Local JSON cache (warm instances only)
+        _load_targets_sync()
+
+    # 3. Last resort: fetch companies from free gov APIs (200 target)
+    if not enriched_targets:
         try:
-            fetched = await load_targets_from_pappers(PAPPERS_MCP_URL, count=10)
+            fetched = await load_targets_from_papperclip(count=200)
             if fetched:
                 save_cache(fetched)
+                await save_to_supabase(fetched)
                 raw_targets = fetched
                 enriched_targets = [enrich_target(c) for c in fetched]
-                print(f"[EdRCF] Loaded {len(enriched_targets)} targets from Pappers MCP")
+                print(f"[EdRCF] Loaded {len(enriched_targets)} targets from Papperclip")
         except Exception as e:
-            print(f"[EdRCF] Pappers fetch failed: {e}")
+            print(f"[EdRCF] Papperclip fetch failed: {e}")
 
     yield
 
@@ -160,8 +176,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Admin pipeline router (Bronze/Silver/BODACC/RNE/Pappers)
+from routers.admin import router as _admin_router
+app.include_router(_admin_router)
+
 # Ensure targets are loaded even if lifespan doesn't run (Vercel serverless)
 _load_targets_sync()
+
+
+@app.get("/api/health")
+async def health():
+    return {"status": "ok"}
 
 
 async def _add_company_to_targets(siren: str) -> Optional[dict]:
@@ -199,98 +224,32 @@ async def _add_company_to_targets(siren: str) -> Optional[dict]:
 # ==========================================================================
 
 
-async def call_pappers_mcp(tool_name: str, arguments: dict):
-    """Call a Pappers MCP tool via the streamable HTTP MCP server."""
-    if not PAPPERS_MCP_URL:
-        return None
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            # MCP streamable HTTP: POST with JSON-RPC
-            resp = await client.post(
-                PAPPERS_MCP_URL,
-                headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "tools/call",
-                    "params": {"name": tool_name, "arguments": arguments},
-                },
-            )
-            if resp.status_code == 200:
-                content_type = resp.headers.get("content-type", "")
-                if "text/event-stream" in content_type:
-                    # Parse SSE response
-                    for line in resp.text.split("\n"):
-                        if line.startswith("data: "):
-                            data = json.loads(line[6:])
-                            if "result" in data:
-                                return data["result"]
-                    return None
-                else:
-                    data = resp.json()
-                    if "result" in data:
-                        return data["result"]
-                    return data
-            print(f"[Pappers MCP] HTTP {resp.status_code}: {resp.text[:200]}")
-    except Exception as e:
-        print(f"[Pappers MCP] Error: {e}")
-    return None
-
-
 async def search_pappers(query: str = "", par_page: str = "10", **filters):
-    """Search companies via Pappers MCP with structured filters. Max 10 results."""
-    args = {
-        "par_page": par_page,
-        "entreprise_cessee": False,
-        "return_fields": ["siren", "nom_entreprise", "siege", "date_creation",
-                          "code_naf", "libelle_code_naf", "effectif",
-                          "forme_juridique", "capital", "chiffre_affaires", "resultat"],
-    }
-    # If query looks like a company name, use nom_entreprise filter
-    if query and not any(k in filters for k in ["code_naf", "age_dirigeant_min"]):
-        args["nom_entreprise"] = query
-    # Merge explicit filters
-    args.update(filters)
-    result = await call_pappers_mcp("recherche-entreprises", args)
-    if result:
-        # Extract text content from MCP response
-        if isinstance(result, dict) and "content" in result:
-            for block in result["content"]:
-                if block.get("type") == "text":
-                    try:
-                        return json.loads(block["text"])
-                    except json.JSONDecodeError:
-                        return {"raw": block["text"]}
-        return result
-    return {"results": [], "message": "Pappers MCP non disponible"}
+    """Search companies via Papperclip (free gov APIs). Returns Pappers-compatible structure."""
+    # Direct SIREN lookup if query is exactly 9 digits
+    clean_query = query.strip()
+    if re.match(r'^\d{9}$', clean_query):
+        company_info = await _papperclip_get_company(clean_query)
+        if company_info and isinstance(company_info, dict) and company_info.get("siren"):
+            return {"resultats": [company_info], "total": 1}
+
+    count = min(int(par_page or "10"), 25)
+    code_naf = filters.get("code_naf", "")
+    departement = filters.get("departement", "")
+    # Use nom_entreprise filter if provided, otherwise free text query
+    search_query = filters.get("nom_entreprise") or query
+    companies = await _papperclip_search(
+        query=search_query,
+        code_naf=code_naf,
+        departement=departement,
+        per_page=count,
+    )
+    return {"resultats": companies, "total": len(companies)}
 
 
 async def get_pappers_company(siren: str):
-    """Get company details via Pappers MCP."""
-    result = await call_pappers_mcp("informations-entreprise", {
-        "siren": siren,
-        "return_fields": [
-            "siren", "nom_entreprise", "siege", "representants",
-            "date_creation", "code_naf", "libelle_code_naf", "effectif",
-            "forme_juridique", "capital", "finances",
-            "beneficiaires_effectifs", "etablissements",
-            "entreprise_cessee", "date_cessation",
-            "procedure_collective_existe", "procedure_collective_en_cours",
-            "procedures_collectives",
-            "scoring_non_financier",
-            # Note: publications_bodacc exclu ici (trop volumineux, endpoint dedie /bodacc/{siren})
-        ],
-    })
-    if result:
-        if isinstance(result, dict) and "content" in result:
-            for block in result["content"]:
-                if block.get("type") == "text":
-                    try:
-                        return json.loads(block["text"])
-                    except json.JSONDecodeError:
-                        return {"raw": block["text"]}
-        return result
-    return None
+    """Get company details via Papperclip (free gov APIs)."""
+    return await _papperclip_get_company(siren)
 
 
 def _extract_group_info(data: dict, cartographie: dict = None) -> dict:
@@ -370,18 +329,12 @@ def _extract_group_info(data: dict, cartographie: dict = None) -> dict:
 
 
 async def get_pappers_dirigeants(siren: str):
-    """Get company directors via Pappers MCP."""
-    result = await call_pappers_mcp("recherche-dirigeants", {"siren": siren})
-    if result:
-        if isinstance(result, dict) and "content" in result:
-            for block in result["content"]:
-                if block.get("type") == "text":
-                    try:
-                        return json.loads(block["text"])
-                    except json.JSONDecodeError:
-                        return {"raw": block["text"]}
-        return result
-    return None
+    """Get company directors via Papperclip."""
+    data = await _papperclip_get_company(siren)
+    if not data:
+        return None
+    return {"representants": data.get("representants", []), "siren": siren,
+            "nom_entreprise": data.get("nom_entreprise", "")}
 
 
 def _validate_siren(siren: str) -> str:
@@ -407,115 +360,59 @@ def _parse_mcp_json(result) -> Optional[dict]:
 
 
 async def get_pappers_bodacc(siren: str) -> Optional[dict]:
-    """
-    Recupere les publications BODACC via informations-entreprise (champ publications_bodacc).
-    Structure reelle Pappers : {type, date, description, administration, bodacc, numero_annonce}
-    """
-    result = await call_pappers_mcp("informations-entreprise", {
-        "siren": siren,
-        "return_fields": [
-            "siren", "nom_entreprise",
-            "entreprise_cessee", "date_cessation",
-            "publications_bodacc",
-            "procedure_collective_existe", "procedure_collective_en_cours",
-            "procedures_collectives",
-        ],
-    })
-    data = _parse_mcp_json(result)
-    if data:
-        return data
-    return None
+    """Recupere les publications BODACC via Papperclip (incluses dans get_full_company_info)."""
+    return await _papperclip_get_company(siren)
 
 
 async def get_pappers_procedures(siren: str) -> Optional[dict]:
-    """Recupere les procedures collectives et le statut d'activite via Pappers MCP."""
-    result = await call_pappers_mcp("informations-entreprise", {
-        "siren": siren,
-        "return_fields": [
-            "siren", "nom_entreprise", "entreprise_cessee", "date_cessation",
-            "procedure_collective_existe", "procedure_collective_en_cours",
-            "procedures_collectives", "scoring_non_financier",
-        ],
-    })
-    return _parse_mcp_json(result)
+    """Recupere les procedures collectives via Papperclip."""
+    return await _papperclip_get_company(siren)
 
 
 async def get_cartographie(siren: str) -> Optional[dict]:
-    """
-    Recupere la cartographie d'une entreprise : entreprises liees et dirigeants.
-    Outil reel Pappers : cartographie-entreprise
-    """
-    result = await call_pappers_mcp("cartographie-entreprise", {
-        "siren": siren,
-        "inclure_entreprises_dirigees": True,
-        "inclure_sci": False,
-    })
-    return _parse_mcp_json(result)
+    """Cartographie groupe non disponible dans Papperclip v1. Returns None."""
+    return None
 
 
 async def get_comptes(siren: str, annee: str = "") -> Optional[dict]:
-    """
-    Recupere les comptes annuels detailles (bilan, liasses) via Pappers MCP.
-    Outil reel : comptes-entreprise.
-    Note : peut timeout sur les grandes entreprises (reponse volumineuse).
-    """
-    args: Dict[str, Any] = {"siren": siren}
-    if annee:
-        args["annee"] = annee
-    try:
-        # Timeout etendu a 60s car comptes-entreprise peut etre volumineux
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(
-                PAPPERS_MCP_URL,
-                headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
-                json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                      "params": {"name": "comptes-entreprise", "arguments": args}},
-            )
-            if resp.status_code == 200:
-                content_type = resp.headers.get("content-type", "")
-                if "text/event-stream" in content_type:
-                    for line in resp.text.split("\n"):
-                        if line.startswith("data: "):
-                            d = json.loads(line[6:])
-                            if "result" in d:
-                                return _parse_mcp_json(d["result"])
-                    return None
-                else:
-                    return _parse_mcp_json(resp.json().get("result"))
-            print(f"[Pappers comptes] HTTP {resp.status_code}")
-    except (httpx.TimeoutException, httpx.ReadTimeout) as e:
-        print(f"[Pappers comptes] Timeout pour SIREN {siren}: {e}")
-    except Exception as e:
-        print(f"[Pappers comptes] Erreur pour SIREN {siren}: {e}")
+    """Comptes annuels detailles non disponibles dans Papperclip v1. Returns None."""
     return None
 
 
 async def search_dirigeant_by_name(q: str) -> Optional[dict]:
-    """
-    Recherche toutes les entreprises ou une personne est dirigeante.
-    Outil reel : recherche-dirigeants avec parametre q (nom + prenom concatenes).
-    """
-    result = await call_pappers_mcp("recherche-dirigeants", {
-        "q": q,
-        "par_page": 20,
-        "siege": False,
-    })
-    return _parse_mcp_json(result)
+    """Recherche dirigeant par nom via Papperclip — recherche approximative par raison sociale."""
+    companies = await _papperclip_search(query=q, per_page=20)
+    resultats = []
+    q_lower = q.lower()
+    for company in companies:
+        reps = company.get("representants", [])
+        matching = [
+            r for r in reps
+            if q_lower in f"{r.get('prenom', '')} {r.get('nom', '')}".lower()
+        ]
+        if matching:
+            for rep in matching:
+                resultats.append({
+                    "entreprises": [{
+                        "siren": company.get("siren"),
+                        "nom_entreprise": company.get("nom_entreprise"),
+                        "code_naf": company.get("code_naf"),
+                        "libelle_code_naf": company.get("libelle_code_naf"),
+                        "siege": company.get("siege"),
+                        "dirigeant": {"qualites": [rep.get("qualite", "")], "actuel": True},
+                    }]
+                })
+    return {"resultats": resultats, "total": len(resultats)}
 
 
 async def get_pappers_concurrents(code_naf: str, departement: str = "", ca_min: int = 0) -> Optional[dict]:
-    """Recherche les entreprises concurrentes (meme code NAF, meme departement)."""
-    args: Dict[str, Any] = {
-        "code_naf": code_naf,
-        "entreprise_cessee": False,
-        "par_page": 20,
-    }
-    if departement:
-        args["departement"] = departement
-    if ca_min > 0:
-        args["chiffre_affaires_min"] = str(ca_min)
-    result = await call_pappers_mcp("recherche-entreprises", args)
-    return _parse_mcp_json(result)
+    """Recherche les entreprises concurrentes via Papperclip (meme code NAF, meme departement)."""
+    companies = await _papperclip_search(
+        code_naf=code_naf,
+        departement=departement,
+        per_page=20,
+    )
+    return {"resultats": companies, "total": len(companies)}
 
 
 # ==========================================================================
@@ -627,22 +524,33 @@ async def get_infogreffe_actes(siren: str, max_results: int = 10) -> list:
 # Copilot with DeepSeek AI
 # ==========================================================================
 
+# Vercel AI Gateway (prioritaire) ou DeepSeek direct (fallback)
+AI_GATEWAY_API_KEY = os.getenv("AI_GATEWAY_API_KEY", "")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 
 
 async def copilot_ai_query(query: str, context: str):
-    if not DEEPSEEK_API_KEY:
+    # Prefer Vercel AI Gateway — single key, cost tracking, cache, multi-model routing
+    if AI_GATEWAY_API_KEY:
+        api_key = AI_GATEWAY_API_KEY
+        base_url = "https://ai-gateway.vercel.sh/v1/chat/completions"
+        model = "deepseek/deepseek-chat"
+    elif DEEPSEEK_API_KEY:
+        api_key = DEEPSEEK_API_KEY
+        base_url = "https://api.deepseek.com/v1/chat/completions"
+        model = "deepseek-chat"
+    else:
         return None  # Fall back to rule-based
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
-                "https://api.deepseek.com/v1/chat/completions",
+                base_url,
                 headers={
-                    "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                    "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "deepseek-chat",
+                    "model": model,
                     "max_tokens": 1024,
                     "temperature": 0.3,
                     "messages": [
@@ -673,6 +581,56 @@ async def copilot_ai_query(query: str, context: str):
     except Exception as e:
         print(f"[DeepSeek] Error: {e}")
     return None
+
+
+async def copilot_ai_query_stream(query: str, context: str):
+    """Streaming version of copilot_ai_query. Yields text chunks."""
+    if AI_GATEWAY_API_KEY:
+        api_key = AI_GATEWAY_API_KEY
+        base_url = "https://ai-gateway.vercel.sh/v1/chat/completions"
+        model = "deepseek/deepseek-chat"
+    elif DEEPSEEK_API_KEY:
+        api_key = DEEPSEEK_API_KEY
+        base_url = "https://api.deepseek.com/v1/chat/completions"
+        model = "deepseek-chat"
+    else:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            async with client.stream(
+                "POST",
+                base_url,
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": model,
+                    "stream": True,
+                    "max_tokens": 1024,
+                    "temperature": 0.3,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "Tu es le Copilot IA d'EdRCF 6.0, plateforme d'origination M&A. "
+                                "Reponds en francais, de maniere concise et professionnelle. "
+                                "Utilise le markdown pour formater tes reponses.\n\n"
+                                f"Contexte:\n{context}"
+                            ),
+                        },
+                        {"role": "user", "content": query},
+                    ],
+                },
+            ) as response:
+                async for line in response.aiter_lines():
+                    if line.startswith("data: ") and "[DONE]" not in line:
+                        try:
+                            data = json.loads(line[6:])
+                            delta = data["choices"][0]["delta"].get("content", "")
+                            if delta:
+                                yield delta
+                        except Exception:
+                            pass
+    except Exception as e:
+        print(f"[Copilot Stream] Error: {e}")
 
 
 # ==========================================================================
@@ -1598,6 +1556,96 @@ def build_target_from_search(idx, search_result, search_context=None):
     }
 
 
+from fastapi.responses import StreamingResponse
+
+
+@app.get("/api/copilot/stream")
+async def copilot_stream_endpoint(q: str = Query(...)):
+    """Server-Sent Events streaming version of the copilot.
+    Yields: data: {"chunk": "..."}\n\n  and  data: {"done": true, "source": "...", "targets_updated": bool}\n\n
+    """
+    async def generate():
+        global enriched_targets, raw_targets
+        targets_updated = False
+
+        context_lines = [
+            f"- {t['name']} ({t['sector']}, {t.get('city','?')}): Score {t['globalScore']}, {t['priorityLevel']}"
+            for t in enriched_targets[:5]
+        ]
+        context = f"Cibles EdRCF ({len(enriched_targets)} total):\n" + "\n".join(context_lines)
+
+        # SIREN direct lookup
+        siren_match = re.search(r'\b(\d{9})\b', q)
+        if siren_match:
+            siren_val = siren_match.group(1)
+            try:
+                company_info = await _papperclip_get_company(siren_val)
+                if company_info and isinstance(company_info, dict) and company_info.get("siren"):
+                    await _add_company_to_targets(siren_val)
+                    targets_updated = True
+                    nom = company_info.get("nom_entreprise", siren_val)
+                    siege = company_info.get("siege") or {}
+                    ville = siege.get("ville", "")
+                    naf = company_info.get("libelle_code_naf", "")
+                    ca = company_info.get("chiffre_affaires", 0)
+                    ca_str = f"{ca/1e6:.1f}M EUR" if ca and ca > 0 else "N/A"
+                    reps = company_info.get("representants") or []
+                    rep_lines = "\n".join([
+                        f"  - {r.get('prenom','')} {r.get('nom','')} ({r.get('qualite','')})"
+                        for r in reps[:3]
+                    ])
+                    text = (
+                        f"**{nom}** — SIREN {siren_val}\n\n"
+                        f"- **Siège** : {ville}\n"
+                        f"- **Activité** : {naf}\n"
+                        f"- **CA** : {ca_str}\n\n"
+                        f"**Dirigeants :**\n{rep_lines or '  N/A'}\n\n"
+                        f"*Entreprise ajoutée à la base EdRCF.*"
+                    )
+                    # Simulate streaming for rule-based response
+                    chunk_size = 40
+                    for i in range(0, len(text), chunk_size):
+                        yield f"data: {json.dumps({'chunk': text[i:i+chunk_size]})}\n\n"
+                    yield f"data: {json.dumps({'done': True, 'source': 'pappers', 'targets_updated': True})}\n\n"
+                    return
+            except Exception as e:
+                print(f"[Stream] SIREN lookup error: {e}")
+
+        # Stream AI response
+        ai_streamed = False
+        async for chunk in copilot_ai_query_stream(q, context):
+            ai_streamed = True
+            yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+
+        if not ai_streamed:
+            # Fallback: call existing rule-based copilot
+            try:
+                result = await copilot_query(q=q)
+                text = result.get("response", "Désolé, je n'ai pas pu traiter cette demande.")
+                targets_updated = result.get("targets_updated", False)
+                chunk_size = 40
+                for i in range(0, len(text), chunk_size):
+                    yield f"data: {json.dumps({'chunk': text[i:i+chunk_size]})}\n\n"
+                done_event: dict = {'done': True, 'source': result.get('source', 'rule-based'), 'targets_updated': targets_updated}
+                if targets_updated:
+                    done_event['targets_count'] = len(enriched_targets)
+                yield f"data: {json.dumps(done_event)}\n\n"
+                return
+            except Exception as e:
+                yield f"data: {json.dumps({'chunk': 'Erreur de connexion. Veuillez réessayer.'})}\n\n"
+
+        done_event = {'done': True, 'source': 'ai', 'targets_updated': targets_updated}
+        if targets_updated:
+            done_event['targets_count'] = len(enriched_targets)
+        yield f"data: {json.dumps(done_event)}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.get("/api/copilot/query")
 async def copilot_query(q: str = Query(...)):
     global enriched_targets, raw_targets
@@ -1740,16 +1788,15 @@ async def copilot_query(q: str = Query(...)):
     if wants_pappers and "chiffre_affaires_min" not in pappers_filters:
         pappers_filters["chiffre_affaires_min"] = "3000000"
 
-    # Force limit to 10 results
-    pappers_filters["par_page"] = "10"
+    pappers_filters["par_page"] = "50"
 
     if wants_pappers and PAPPERS_MCP_URL:
         try:
             pappers_data = await search_pappers(**pappers_filters)
             if isinstance(pappers_data, dict) and "resultats" in pappers_data:
-                resultats = pappers_data["resultats"][:10]
+                resultats = pappers_data["resultats"][:50]
                 total = pappers_data.get("total", 0)
-                pappers_lines = [f"\nPappers ({total} resultats, 10 affiches):"]
+                pappers_lines = [f"\nPappers ({total} resultats, {len(resultats)} affiches):"]
                 for r in resultats:
                     nom = r.get("nom_entreprise", "?")
                     siren = r.get("siren", "?")
@@ -2217,206 +2264,120 @@ async def copilot_query(q: str = Query(...)):
 
 @app.get("/api/graph")
 def get_graph():
-    """Network graph data with EDR team, targets, advisors, and subsidiaries"""
-    nodes = [
-        {
-            "id": "edr-1",
-            "name": "Quentin Moreau",
-            "type": "internal",
-            "role": "Analyste Senior, EDR CF",
-            "color": "#6366f1",
-            "signals_count": 0,
-            "signals": [],
-            "is_holding": False,
-        },
-        {
-            "id": "edr-2",
-            "name": "Manon Lefevre",
-            "type": "internal",
-            "role": "Directrice, EDR CF",
-            "color": "#6366f1",
-            "signals_count": 0,
-            "signals": [],
-            "is_holding": False,
-        },
-        {
-            "id": "edr-3",
-            "name": "Pierre Legrand",
-            "type": "internal",
-            "role": "Banquier Prive, EDR",
-            "color": "#6366f1",
-            "signals_count": 0,
-            "signals": [],
-            "is_holding": False,
-        },
+    """Enhanced network graph: director nodes, cross-mandates, score-based colors, M&A signals."""
+    nodes: list = []
+    links: list = []
+    node_ids: set = set()
+    director_companies: dict = {}  # dir_id -> [company_id, ...]
+
+    edr_team = [
+        {"id": "edr-1", "name": "Quentin Moreau", "role": "Analyste Senior, EDR CF"},
+        {"id": "edr-2", "name": "Manon Lefevre", "role": "Directrice, EDR CF"},
+        {"id": "edr-3", "name": "Pierre Legrand", "role": "Banquier Privé, EDR"},
     ]
-    links = []
-
-    # Add target company nodes (top 8 by score)
-    top_targets = sorted(enriched_targets, key=lambda x: x["globalScore"], reverse=True)[:8]
-    for t in top_targets:
-        main_dirigeant = t["dirigeants"][0] if t["dirigeants"] else {"name": t["name"], "role": "Dirigeant"}
-
-        # Signals from scoring engine
-        top_signals = t.get("topSignals", [])
-        signals_count = len(top_signals)
-        signals_labels = [s.get("label", s.get("id", "")) for s in top_signals[:5]]
-
-        # Group/holding detection — support both Pappers build_target and demo_data fallback
-        groupe = t.get("groupe") or {}
-        group = t.get("group") or {}
-        is_holding = groupe.get("is_holding") or groupe.get("is_group") or group.get("is_group") or False
-        entreprises_liees = groupe.get("entreprises_liees") or group.get("subsidiaries") or []
-
-        nodes.append(
-            {
-                "id": t["id"],
-                "name": main_dirigeant["name"],
-                "type": "target",
-                "role": f"{main_dirigeant['role']}, {t['name']}",
-                "color": "#10b981",
-                "company": t["name"],
-                "score": t["globalScore"],
-                "signals_count": signals_count,
-                "signals": signals_labels,
-                "is_holding": is_holding,
-            }
-        )
-
-        # Subsidiary nodes — up to 3 per target
-        for i, sub in enumerate(entreprises_liees[:3]):
-            if isinstance(sub, str):
-                sub_name = sub or f"Filiale {i+1}"
-            elif isinstance(sub, dict):
-                sub_name = sub.get("denomination") or sub.get("name") or f"Filiale {i+1}"
-            else:
-                sub_name = f"Filiale {i+1}"
-            sub_id = f"{t['id']}-sub-{i}"
-            nodes.append({
-                "id": sub_id,
-                "name": sub_name,
-                "type": "subsidiary",
-                "role": f"Filiale de {t['name']}",
-                "color": "#8b5cf6",
-                "company": t["name"],
-                "score": None,
-                "signals_count": 0,
-                "signals": [],
-                "is_holding": False,
-            })
-            links.append({
-                "source": t["id"],
-                "target": sub_id,
-                "label": "Filiale",
-                "value": 1,
-            })
-
-        # Create relationship links based on edr_banker
-        if t["relationship"]["edr_banker"]:
-            banker_id = next(
-                (
-                    n["id"]
-                    for n in nodes
-                    if t["relationship"]["edr_banker"] in n["name"]
-                ),
-                "edr-1",
-            )
-            links.append(
-                {
-                    "source": banker_id,
-                    "target": t["id"],
-                    "label": t["relationship"]["path"][:50],
-                    "value": max(1, t["relationship"]["strength"] // 25),
-                }
-            )
-        elif t["relationship"]["strength"] > 20:
-            links.append(
-                {
-                    "source": "edr-1",
-                    "target": t["id"],
-                    "label": "Reseau commun",
-                    "value": 2,
-                }
-            )
-
-    # Add advisor nodes
-    advisors = [
-        {
-            "id": "adv-1",
-            "name": "Jean Dupont",
-            "type": "advisor",
-            "role": "Partner, Rothschild & Co",
-            "color": "#f59e0b",
-            "signals_count": 0,
-            "signals": [],
-            "is_holding": False,
-        },
-        {
-            "id": "adv-2",
-            "name": "Marie Leclerc",
-            "type": "advisor",
-            "role": "Associee, Darrois Villey",
-            "color": "#f59e0b",
-            "signals_count": 0,
-            "signals": [],
-            "is_holding": False,
-        },
-        {
-            "id": "adv-3",
-            "name": "Paul Bernard",
-            "type": "advisor",
-            "role": "Partner, PwC Advisory",
-            "color": "#f59e0b",
-            "signals_count": 0,
-            "signals": [],
-            "is_holding": False,
-        },
-        {
-            "id": "adv-4",
-            "name": "Helene Garnier",
-            "type": "advisor",
-            "role": "Directrice, InfraVia Capital",
-            "color": "#f59e0b",
-            "signals_count": 0,
-            "signals": [],
-            "is_holding": False,
-        },
-        {
-            "id": "adv-5",
-            "name": "Nicolas Fabre",
-            "type": "advisor",
-            "role": "Partner, Eurazeo",
-            "color": "#f59e0b",
-            "signals_count": 0,
-            "signals": [],
-            "is_holding": False,
-        },
-    ]
-    nodes.extend(advisors)
-
-    # Internal EDR team links (always valid)
-    links.extend([
-        {"source": "edr-2", "target": "adv-1", "label": "Co-mandats historiques", "value": 3},
-        {"source": "edr-1", "target": "adv-3", "label": "Alumni network", "value": 2},
-        {"source": "edr-1", "target": "adv-4", "label": "Coverage Sponsors", "value": 3},
-        {"source": "edr-2", "target": "adv-5", "label": "Relation Sponsors", "value": 3},
-        {"source": "edr-2", "target": "edr-3", "label": "Equipe EDR CF / Banque Privee", "value": 4},
-        {"source": "edr-1", "target": "edr-2", "label": "Equipe origination", "value": 4},
-    ])
-
-    # Dynamic advisor-to-target links (based on actual current targets)
-    target_ids = [t["id"] for t in top_targets]
-    advisor_ids = [a["id"] for a in advisors]
-    labels = ["Conseil M&A", "Audit en cours", "Conseil juridique", "Coverage sectorielle", "Actionnaire"]
-    for i, tid in enumerate(target_ids[:min(5, len(advisor_ids))]):
-        links.append({
-            "source": advisor_ids[i % len(advisor_ids)],
-            "target": tid,
-            "label": labels[i % len(labels)],
-            "value": max(2, 5 - i),
+    for edr in edr_team:
+        nodes.append({
+            "id": edr["id"], "name": edr["name"], "type": "internal",
+            "role": edr["role"], "color": "#6366f1", "score": None,
+            "signals_count": 0, "signals": [], "is_holding": False,
+            "node_size": 9, "multi_mandats": False,
         })
+        node_ids.add(edr["id"])
 
-    return {"data": {"nodes": nodes, "links": links}}
+    top_targets = sorted(enriched_targets, key=lambda x: x["globalScore"], reverse=True)[:12]
+
+    for t in top_targets:
+        score = t["globalScore"]
+        siren = t.get("siren", "")
+        color = "#10b981" if score >= 65 else "#f59e0b" if score >= 45 else "#6366f1" if score >= 25 else "#64748b"
+        groupe = t.get("groupe") or t.get("group") or {}
+        is_holding = bool(groupe.get("is_holding") or groupe.get("is_group"))
+        subsidiaries = groupe.get("entreprises_liees") or groupe.get("subsidiaries") or []
+        top_signals = t.get("topSignals", [])
+
+        nodes.append({
+            "id": t["id"], "name": t["name"], "type": "company",
+            "role": t.get("sector", ""), "color": color, "score": score,
+            "priority": t.get("priorityLevel", ""),
+            "signals_count": len(top_signals),
+            "signals": [s.get("label", "") for s in top_signals[:5]],
+            "is_holding": is_holding,
+            "sector": t.get("sector", ""), "city": t.get("city", ""),
+            "siren": siren,
+            "ca": (t.get("financials") or {}).get("revenue", "N/A"),
+            "ebitda": (t.get("financials") or {}).get("ebitda", "N/A"),
+            "node_size": max(6, min(14, 5 + score // 10)),
+            "multi_mandats": False,
+        })
+        node_ids.add(t["id"])
+
+        for edr in edr_team:
+            links.append({"source": edr["id"], "target": t["id"], "label": "Suivi", "value": 1, "type": "follow"})
+
+        for d in t.get("dirigeants", [])[:3]:
+            dir_name = (d.get("name") or "").strip()
+            if not dir_name or dir_name == t["name"]:
+                continue
+            dir_age = d.get("age", 0) or 0
+            safe = dir_name.lower().replace(" ", "-").replace("'", "").replace("\u2019", "")
+            dir_id = f"dir-{safe}"
+
+            if dir_id not in node_ids:
+                dir_color = "#ef4444" if dir_age >= 60 else "#f59e0b" if dir_age >= 50 else "#94a3b8"
+                nodes.append({
+                    "id": dir_id, "name": dir_name, "type": "director",
+                    "role": d.get("role", "Dirigeant"), "color": dir_color,
+                    "age": dir_age, "age_signal": dir_age >= 60,
+                    "score": None, "node_size": 5,
+                    "signals_count": 1 if dir_age >= 60 else 0,
+                    "signals": ["Fondateur > 60 ans — Signal succession"] if dir_age >= 60 else [],
+                    "company": t["name"], "multi_mandats": False, "is_holding": False,
+                })
+                node_ids.add(dir_id)
+                director_companies[dir_id] = [t["id"]]
+            else:
+                for prev_cid in director_companies.get(dir_id, []):
+                    links.append({
+                        "source": prev_cid, "target": t["id"],
+                        "label": f"Mandat croisé — {dir_name}",
+                        "value": 3, "type": "cross_mandate", "director": dir_name,
+                    })
+                for n in nodes:
+                    if n["id"] == dir_id:
+                        n["multi_mandats"] = True
+                        n["color"] = "#f97316"
+                        if "Mandat croisé détecté" not in n["signals"]:
+                            n["signals"].append("Mandat croisé détecté")
+                            n["signals_count"] += 1
+                director_companies.setdefault(dir_id, []).append(t["id"])
+
+            links.append({"source": dir_id, "target": t["id"], "label": d.get("role", "Dirige"), "value": 2, "type": "directs"})
+
+        for i, sub in enumerate(subsidiaries[:2]):
+            sub_name = sub if isinstance(sub, str) else (sub.get("denomination") or sub.get("name") or f"Filiale {i+1}")
+            sub_id = f"{t['id']}-sub-{i}"
+            if sub_id not in node_ids:
+                nodes.append({
+                    "id": sub_id, "name": sub_name, "type": "subsidiary",
+                    "role": f"Filiale de {t['name']}", "color": "#8b5cf6",
+                    "score": None, "signals_count": 0, "signals": [],
+                    "is_holding": False, "company": t["name"], "node_size": 4, "multi_mandats": False,
+                })
+                node_ids.add(sub_id)
+                links.append({"source": t["id"], "target": sub_id, "label": "Filiale", "value": 1, "type": "subsidiary"})
+
+    cross_mandates_count = sum(1 for l in links if l.get("type") == "cross_mandate")
+    return {
+        "data": {"nodes": nodes, "links": links},
+        "stats": {
+            "nodes": len(nodes),
+            "links": len(links),
+            "companies": sum(1 for n in nodes if n["type"] == "company"),
+            "directors": sum(1 for n in nodes if n["type"] == "director"),
+            "cross_mandates": cross_mandates_count,
+            "signals": sum(n.get("signals_count", 0) for n in nodes),
+        },
+    }
 
 
 @app.get("/api/sectors")
@@ -2461,11 +2422,9 @@ async def _enrich_with_external_sources(targets: list) -> list:
 
 @app.post("/api/refresh-targets")
 async def refresh_targets():
-    """Refresh targets from Pappers MCP, then enrich with Google News + Infogreffe."""
+    """Refresh targets from Papperclip (free gov APIs), then enrich with Google News + Infogreffe."""
     global enriched_targets, raw_targets
-    if not PAPPERS_MCP_URL:
-        raise HTTPException(400, "Pappers MCP URL not configured")
-    fetched = await load_targets_from_pappers(PAPPERS_MCP_URL, count=10)
+    fetched = await load_targets_from_papperclip(count=10)
     if fetched:
         # Enrich with external sources (news + infogreffe actes)
         print(f"[EdRCF] Enriching {len(fetched)} targets with Google News + Infogreffe...")
@@ -2482,6 +2441,360 @@ async def refresh_targets():
             "infogreffe_actes": actes_count,
         }
     raise HTTPException(500, "Echec du chargement Pappers")
+
+
+@app.get("/api/admin/refresh-db")
+async def admin_refresh_db(
+    secret: str = Query(default=""),
+    count: int = Query(default=200, ge=10, le=500),
+):
+    """Cron-safe endpoint: refresh companies from Papperclip + BODACC and save to Supabase.
+    Optional: protect with CRON_SECRET env var. count param controls target size (default 200)."""
+    cron_secret = os.getenv("CRON_SECRET", "")
+    if cron_secret and secret != cron_secret:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    global enriched_targets, raw_targets
+    try:
+        fetched = await load_targets_from_papperclip(count=count)
+        if fetched:
+            save_cache(fetched)
+            await save_to_supabase(fetched)
+            raw_targets = fetched
+            enriched_targets = [enrich_target(c) for c in fetched]
+            return {
+                "ok": True,
+                "total": len(enriched_targets),
+                "message": f"Refreshed {len(enriched_targets)} companies from Papperclip → Supabase",
+            }
+        raise HTTPException(500, "Papperclip returned no data")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Refresh failed: {e}")
+
+
+@app.get("/api/admin/load-sector")
+async def admin_load_sector(
+    naf: str = Query(..., description="NAF code, e.g. 62.01Z"),
+    count: int = Query(default=10, ge=1, le=50),
+    label: str = Query(default=""),
+    secret: str = Query(default=""),
+):
+    """On-demand: load companies from a specific NAF code and add to the live pool.
+    Skips SIRENs already in the pool. Returns the new targets added."""
+    cron_secret = os.getenv("CRON_SECRET", "")
+    if cron_secret and secret != cron_secret:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    global enriched_targets, raw_targets
+
+    existing_sirens = {t.get("siren") for t in raw_targets}
+    results = await _papperclip_search(code_naf=naf, per_page=count)
+
+    new_raw: list = []
+    for company in results:
+        siren = company.get("siren", "")
+        if siren and siren not in existing_sirens:
+            existing_sirens.add(siren)
+            new_raw.append(company)
+
+    if not new_raw:
+        return {"added": 0, "total": len(enriched_targets), "message": "No new companies found for this NAF code"}
+
+    new_targets = []
+    base_idx = len(raw_targets) + 1
+    for i, company in enumerate(new_raw):
+        siren = company.get("siren", "")
+        try:
+            company_info = await _papperclip_get_company(siren)
+            if not company_info:
+                continue
+            target = build_target(idx=base_idx + i, company_info=company_info, search_info=company)
+            new_targets.append(target)
+        except Exception as e:
+            print(f"[load-sector] Error for {siren}: {e}")
+
+    if new_targets:
+        async with _targets_lock:
+            raw_targets.extend(new_targets)
+            new_enriched = [enrich_target(c) for c in new_targets]
+            enriched_targets.extend(new_enriched)
+        await save_to_supabase(new_targets)
+
+    return {
+        "added": len(new_targets),
+        "total": len(enriched_targets),
+        "sector_label": label or naf,
+        "companies": [{"name": t["name"], "siren": t["siren"], "score": t.get("globalScore", 0)} for t in new_targets],
+    }
+
+
+# =============================================================================
+# Admin helpers
+# =============================================================================
+
+_SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
+_SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+
+
+def _check_admin_secret(secret: str):
+    """Vérifie le secret admin. Passe si CRON_SECRET n'est pas configuré."""
+    cron_secret = os.getenv("CRON_SECRET", "")
+    if cron_secret and secret != cron_secret:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def _supabase_headers_main() -> dict:
+    return {
+        "apikey": _SUPABASE_KEY,
+        "Authorization": f"Bearer {_SUPABASE_KEY}",
+        "Content-Type": "application/json",
+    }
+
+
+# NOTE: /api/admin/bronze-stats, /load-bronze, /load-bodacc, /load-rne,
+#       /load-pappers, /run-all → voir routers/admin.py (inclus ci-dessus)
+
+
+# =============================================================================
+# /api/admin/index-stats — Stats de sirene_index
+# =============================================================================
+
+@app.get("/api/admin/index-stats")
+async def admin_index_stats(secret: str = Query(default="")):
+    """Stats de la table sirene_index Supabase (index 16M SIRENE)."""
+    _check_admin_secret(secret)
+
+    if not _SUPABASE_URL or not _SUPABASE_KEY:
+        return {"configured": False, "message": "Supabase non configuré (SUPABASE_URL / SUPABASE_KEY)"}
+
+    stats: dict = {"configured": True}
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            for label, extra_params in [
+                ("total_indexed",   {}),
+                ("enriched",        {"enriched": "eq.true"}),
+                ("to_enrich",       {"enriched": "eq.false"}),
+                ("bodacc_hot",      {"bodacc_recent": "eq.true"}),
+                ("high_score_60p",  {"ma_score_estimate": "gte.60"}),
+            ]:
+                r = await client.get(
+                    f"{_SUPABASE_URL}/rest/v1/sirene_index",
+                    params={"select": "count", **extra_params},
+                    headers={**_supabase_headers_main(), "Prefer": "count=exact"},
+                )
+                content_range = r.headers.get("content-range", "0/0")
+                stats[label] = int(content_range.split("/")[-1])
+    except Exception as e:
+        stats["error"] = str(e)
+
+    stats["enriched_targets_in_memory"] = len(enriched_targets)
+    return stats
+
+
+# =============================================================================
+# /api/admin/rebuild-index — Lance le pipeline SIRENE
+# =============================================================================
+
+@app.get("/api/admin/rebuild-index")
+async def admin_rebuild_index(
+    background_tasks: BackgroundTasks,
+    mode: str = Query(
+        default="api",
+        description="'api' = sweep paginé Vercel-safe | 'bulk' = dl SIRENE complet (local uniquement)",
+    ),
+    depts: str = Query(
+        default="",
+        description="Départements séparés par virgule, ex: 75,69,13 (mode api uniquement)",
+    ),
+    secret: str = Query(default=""),
+):
+    """Lance le rebuild de sirene_index.
+
+    mode=api  : sweep via API Recherche Entreprises — fonctionne sur Vercel.
+                Couvre les grands départements × 62 codes NAF.
+                Durée estimée : 20-60 min selon le nb de depts.
+
+    mode=bulk : télécharge le fichier SIRENE INSEE complet (~2.5 Go) et filtre
+                localement. Uniquement pour usage local ou VPS (pas Vercel).
+                Durée estimée : 15-25 min. Produit 50 000-80 000 SIRENs.
+    """
+    _check_admin_secret(secret)
+
+    dept_list = [d.strip() for d in depts.split(",") if d.strip()] if depts else []
+
+    if mode == "bulk":
+        try:
+            from sirene_bulk import run_full_rebuild
+            background_tasks.add_task(run_full_rebuild)
+            return {
+                "status": "started",
+                "mode": "bulk",
+                "message": (
+                    "Téléchargement SIRENE complet lancé en background (~20 min). "
+                    "Suivre la progression dans les logs serveur."
+                ),
+            }
+        except ImportError:
+            raise HTTPException(500, "sirene_bulk.py introuvable dans le PATH")
+
+    # mode=api (défaut — Vercel-safe)
+    try:
+        from sirene_bulk import api_mode_sweep
+        background_tasks.add_task(api_mode_sweep, dept_list or None, 25)
+        return {
+            "status": "started",
+            "mode": "api",
+            "depts": dept_list if dept_list else "20 grands départements par défaut",
+            "naf_codes": 62,
+            "message": (
+                "Sweep API lancé en background. "
+                "Vérifier /api/admin/index-stats pour suivre la progression."
+            ),
+        }
+    except ImportError:
+        raise HTTPException(500, "sirene_bulk.py introuvable dans le PATH")
+
+
+# =============================================================================
+# /api/admin/enrich-batch — Enrichit N entreprises depuis sirene_index
+# =============================================================================
+
+@app.get("/api/admin/enrich-batch")
+async def admin_enrich_batch(
+    n: int = Query(default=20, ge=1, le=100, description="Nb d'entreprises à enrichir (max 100)"),
+    priority: str = Query(
+        default="score",
+        description="'score' (ma_score_estimate DESC) | 'bodacc' (BODACC hot en priorité) | 'fifo' (created_at ASC)",
+    ),
+    secret: str = Query(default=""),
+):
+    """Enrichit N entreprises depuis sirene_index (non encore enrichies).
+
+    Chaque enrichissement appelle get_full_company_info() → build_target() → Supabase.
+    Rate-limited à ~5 req/s pour respecter les quotas API gouvernementaux.
+    Les nouvelles cibles sont immédiatement disponibles dans /api/targets.
+    """
+    _check_admin_secret(secret)
+
+    if not _SUPABASE_URL or not _SUPABASE_KEY:
+        raise HTTPException(400, "Supabase non configuré — impossible de lire sirene_index")
+
+    global enriched_targets, raw_targets
+
+    # ── 1. Récupérer les SIRENs candidats depuis sirene_index ────────────
+    order_map = {
+        "score":  "ma_score_estimate.desc",
+        "bodacc": "bodacc_recent.desc,ma_score_estimate.desc",
+        "fifo":   "created_at.asc",
+    }
+    order_clause = order_map.get(priority, "ma_score_estimate.desc")
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(
+                f"{_SUPABASE_URL}/rest/v1/sirene_index",
+                params={
+                    "enriched": "eq.false",
+                    "select": "siren,denomination,naf,dept,ma_score_estimate,bodacc_recent",
+                    "order": order_clause,
+                    "limit": n,
+                },
+                headers=_supabase_headers_main(),
+            )
+            if r.status_code != 200:
+                raise HTTPException(500, f"Supabase error HTTP {r.status_code}")
+            candidates = r.json()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Erreur lecture sirene_index: {e}")
+
+    if not candidates:
+        return {
+            "enriched": 0,
+            "total_in_memory": len(enriched_targets),
+            "message": "Aucun SIREN à enrichir dans sirene_index (tous déjà enrichis ou index vide).",
+        }
+
+    # ── 2. Enrichissement de chaque candidat ─────────────────────────────
+    existing_sirens = {t.get("siren") for t in raw_targets}
+    results: dict = {"enriched": 0, "skipped": 0, "failed": 0, "new_targets": []}
+
+    for candidate in candidates:
+        siren = candidate["siren"]
+
+        # Skip si déjà en mémoire
+        if siren in existing_sirens:
+            results["skipped"] += 1
+            _mark_enriched_in_index(siren)  # corriger l'index
+            continue
+
+        try:
+            company_info = await _papperclip_get_company(siren)
+            if not company_info:
+                results["failed"] += 1
+                continue
+
+            target = build_target(
+                idx=len(raw_targets) + 1,
+                company_info=company_info,
+                search_info={
+                    "siren": siren,
+                    "nom_entreprise": candidate.get("denomination", ""),
+                    "code_naf": candidate.get("naf", ""),
+                },
+            )
+
+            async with _targets_lock:
+                raw_targets.append(target)
+                enriched = enrich_target(target)
+                enriched_targets.append(enriched)
+                existing_sirens.add(siren)
+
+            results["enriched"] += 1
+            results["new_targets"].append({
+                "name":    target["name"],
+                "siren":   siren,
+                "score":   target.get("globalScore", 0),
+                "signals": len(target.get("active_signals", [])),
+                "dept":    candidate.get("dept", ""),
+                "naf":     candidate.get("naf", ""),
+            })
+
+            # Marquer enrichi dans sirene_index
+            asyncio.create_task(_mark_enriched_in_index(siren))
+
+        except Exception as e:
+            print(f"[enrich-batch] Erreur {siren}: {e}")
+            results["failed"] += 1
+
+        await asyncio.sleep(0.2)  # ~5 req/s
+
+    # ── 3. Sauvegarder les nouvelles cibles en Supabase ─────────────────
+    if results["enriched"] > 0:
+        new_sirens = {t["siren"] for t in results["new_targets"]}
+        new_raw = [t for t in raw_targets if t.get("siren") in new_sirens]
+        await save_to_supabase(new_raw)
+
+    results["total_in_memory"] = len(enriched_targets)
+    return results
+
+
+async def _mark_enriched_in_index(siren: str):
+    """Marque un SIREN comme enrichi dans sirene_index (fire-and-forget)."""
+    if not _SUPABASE_URL or not _SUPABASE_KEY:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            await client.patch(
+                f"{_SUPABASE_URL}/rest/v1/sirene_index?siren=eq.{siren}",
+                json={"enriched": True, "enriched_at": datetime.utcnow().isoformat()},
+                headers={**_supabase_headers_main(), "Prefer": "resolution=merge-duplicates"},
+            )
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

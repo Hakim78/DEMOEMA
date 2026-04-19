@@ -28,10 +28,22 @@ interface GraphNode {
   role: string;
   color: string;
   company?: string;
-  score?: number;
+  score?: number | null;
   signals_count?: number;
   signals?: string[];
   is_holding?: boolean;
+  age?: number;
+  age_signal?: boolean;
+  multi_mandats?: boolean;
+  sector?: string;
+  city?: string;
+  siren?: string;
+  ca?: string;
+  ebitda?: string;
+  priority?: string;
+  node_size?: number;
+  x?: number;
+  y?: number;
 }
 
 type FilterType = "all" | "internal" | "target" | "advisor" | "subsidiary";
@@ -48,6 +60,7 @@ const FILTER_OPTIONS: { key: FilterType; label: string; color: string }[] = [
 export default function RelationshipGraph() {
   const { data: graphResponse, isLoading } = useGraph();
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
   const [search, setSearch] = useState("");
   const [activeFilter, setActiveFilter] = useState<FilterType>("all");
   const [layout, setLayout] = useState<LayoutType>("force");
@@ -56,6 +69,16 @@ export default function RelationshipGraph() {
 
   const filteredData = useMemo(() => {
     let nodes = graphData.nodes;
+    if (activeFilter !== "all") nodes = nodes.filter(n => n.type === activeFilter);
+    if (search) nodes = nodes.filter(n =>
+      n.name.toLowerCase().includes(search.toLowerCase()) ||
+      (n.company || "").toLowerCase().includes(search.toLowerCase()) ||
+      (n.sector || "").toLowerCase().includes(search.toLowerCase())
+    );
+    const ids = new Set(nodes.map(n => n.id));
+    const links = graphData.links.filter(l => ids.has(l.source as string) && ids.has(l.target as string));
+    return { nodes, links };
+  }, [search, activeFilter, graphData]);
 
     if (activeFilter !== "all") {
       if (activeFilter === "subsidiary") {

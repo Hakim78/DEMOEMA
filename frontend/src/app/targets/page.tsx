@@ -25,6 +25,8 @@ import {
   Layers,
   RotateCcw,
   Network,
+  Plus,
+  Loader2,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -207,8 +209,77 @@ export default function TargetsPage() {
   const structures = apiFilters?.structures || ["Familiale", "PE-backed", "Groupe côté"];
   const ebitdaRanges = apiFilters?.ebitda_ranges || ["< 3M", "3-10M", "10-30M", "> 30M"];
 
+  // ── NAF Sector importer ───────────────────────────────────────────
+  const [showImport, setShowImport] = useState(false);
+  const [importNaf, setImportNaf] = useState("");
+  const [importCount, setImportCount] = useState(10);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{ added: number; total: number } | null>(null);
+
+  const handleImportSector = async () => {
+    if (!importNaf.trim()) return;
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const res = await fetch(`/api/admin/load-sector?naf=${encodeURIComponent(importNaf.trim())}&count=${importCount}`);
+      const data = await res.json();
+      setImportResult({ added: data.added ?? 0, total: data.total ?? 0 });
+      if (data.added > 0) {
+        fetchTargets();
+        window.dispatchEvent(new CustomEvent("targets-updated"));
+      }
+    } catch {
+      setImportResult({ added: -1, total: 0 });
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleExportCSV = () => {
+    if (filteredAndSortedTargets.length === 0) return;
+    const escape = (v: string | number | undefined | null) => {
+      const s = String(v ?? "");
+      return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const headers = [
+      "Entité", "SIREN", "Secteur", "Sous-secteur", "Région", "Ville",
+      "Structure", "Publication", "Score", "Priorité",
+      "Type M&A", "Fenêtre", "CA", "EBITDA", "Marge EBITDA", "Effectif",
+      "Signaux actifs", "Dirigeant principal", "Relation EDR (%)",
+    ];
+    const rows = filteredAndSortedTargets.map(t => [
+      t.name,
+      t.siren,
+      t.sector,
+      t.sub_sector || "",
+      t.region || "",
+      t.city || "",
+      t.structure || "",
+      t.publication_status || "",
+      t.globalScore,
+      t.priorityLevel,
+      t.analysis?.type || "",
+      t.analysis?.window || "",
+      t.financials?.revenue || "",
+      t.financials?.ebitda || "",
+      t.financials?.ebitda_margin || "",
+      t.financials?.effectif ?? "",
+      t.topSignals?.length ?? 0,
+      t.dirigeants?.[0]?.name || "",
+      t.relationship?.strength ?? "",
+    ]);
+    const csv = [headers, ...rows].map(r => r.map(escape).join(",")).join("\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `EDRCF_Intelligence_Vault_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
-    <div className="flex flex-col gap-10 w-full max-w-7xl mx-auto py-4 h-[calc(100vh-8rem)]">
+    <div className="flex flex-col gap-5 sm:gap-6 lg:gap-8 w-full py-4 h-[calc(100dvh-5rem)] sm:h-[calc(100dvh-6rem)]">
 
       {/* ── Filter Sidebar Overlay ───────────────────────────────── */}
       <AnimatePresence>
@@ -473,110 +544,190 @@ export default function TargetsPage() {
       </AnimatePresence>
 
       {/* ── Header ───────────────────────────────────────────────── */}
-      <header className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 shrink-0">
-        <div>
-          <h1 className="text-3xl md:text-5xl font-black tracking-tighter text-white mb-3 flex flex-wrap items-center gap-4 sm:gap-5">
-            Intelligence Vault
-            <div className="px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-[10px] text-indigo-400 font-black uppercase tracking-[0.2em]">
-              {filteredAndSortedTargets.length} entités sur {totalCount}
+      <header className="shrink-0 space-y-5">
+        <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
+          <div>
+            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-black tracking-tighter text-white mb-1.5">
+              Intelligence Vault
+            </h1>
+            <p className="text-gray-500 text-sm font-medium">
+              {filteredAndSortedTargets.length} entités sur {totalCount} analysées
+              {activeFilterCount > 0 && <span className="text-indigo-400 ml-2">({activeFilterCount} filtres actifs)</span>}
+            </p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
+            <div className="relative group flex-1 sm:flex-none sm:w-56 lg:w-64">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 group-focus-within:text-indigo-400 transition-colors">
+                <Search size={16} />
+              </span>
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Rechercher une entité..."
+                className="w-full bg-white/[0.03] border border-white/10 rounded-xl py-2.5 pl-9 pr-4 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-indigo-500/50 focus:bg-white/[0.05] transition-all"
+              />
             </div>
-          </h1>
-          <p className="text-gray-400 text-base md:text-lg font-medium max-w-2xl leading-relaxed">
-            Répertoire universel des entités analysées. Calibré par le <span className="text-white">Scoring EDRCF Haute-Fidélité</span>.
-          </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowWeights(true)}
+                className="flex-1 sm:flex-none px-3 py-2.5 rounded-xl bg-white/[0.03] border border-white/10 text-gray-400 hover:text-white hover:bg-white/10 transition-all flex items-center justify-center gap-2 text-[10px] font-black uppercase tracking-wider"
+              >
+                <BarChart3 size={15} /> <span className="hidden sm:inline">Poids</span>
+              </button>
+              <button
+                onClick={() => setShowFilters(true)}
+                className={`flex-1 sm:flex-none px-3 py-2.5 rounded-xl transition-all relative flex items-center justify-center gap-2 text-[10px] font-black uppercase tracking-wider
+                  ${activeFilterCount > 0
+                    ? "bg-indigo-600 border border-indigo-500 text-white"
+                    : "bg-white/[0.03] border border-white/10 text-gray-400 hover:text-white hover:bg-white/10"
+                  }
+                `}
+              >
+                <SlidersHorizontal size={15} /> <span className="hidden sm:inline">Filtres</span>
+                {activeFilterCount > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-indigo-400 text-white text-[8px] font-black flex items-center justify-center border border-[#0a0a0a]">
+                    {activeFilterCount}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={handleExportCSV}
+                disabled={filteredAndSortedTargets.length === 0}
+                className="flex-1 sm:flex-none px-3 py-2.5 rounded-xl bg-white/[0.03] border border-white/10 text-gray-400 hover:text-indigo-400 hover:bg-indigo-500/10 hover:border-indigo-500/20 transition-all flex items-center justify-center gap-2 text-[10px] font-black uppercase tracking-wider disabled:opacity-30 disabled:cursor-not-allowed"
+                title={`Exporter ${filteredAndSortedTargets.length} cibles en CSV`}
+              >
+                <Download size={15} /> <span className="hidden sm:inline">Export CSV</span>
+              </button>
+              <button
+                onClick={() => { setShowImport(v => !v); setImportResult(null); }}
+                className={`flex-1 sm:flex-none px-3 py-2.5 rounded-xl border transition-all flex items-center justify-center gap-2 text-[10px] font-black uppercase tracking-wider
+                  ${showImport ? "bg-indigo-600 border-indigo-500 text-white" : "bg-white/3 border-white/10 text-gray-400 hover:text-indigo-400 hover:bg-indigo-500/10 hover:border-indigo-500/20"}`}
+                title="Importer un secteur via code NAF"
+              >
+                <Plus size={15} /> <span className="hidden sm:inline">Importer</span>
+              </button>
+            </div>
+          </div>
         </div>
 
-        <div className="flex flex-col sm:flex-row gap-4 w-full lg:w-auto">
-          <div className="relative group w-full lg:w-80">
-            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 group-focus-within:text-indigo-400 transition-colors">
-              <Search size={20} />
-            </span>
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Rechercher une entité..."
-              className="w-full bg-white/[0.03] border border-white/10 rounded-[2rem] py-4 pl-14 pr-6 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-indigo-500/50 focus:bg-white/[0.05] transition-all backdrop-blur-md"
-            />
-          </div>
-          <div className="flex gap-4 w-full sm:w-auto">
-            <button
-              onClick={() => setShowWeights(true)}
-              className="flex-1 sm:flex-none px-6 py-4 rounded-[2rem] bg-white/[0.03] border border-white/10 text-white hover:bg-white/10 transition-all flex items-center justify-center gap-3 font-black text-[11px] uppercase tracking-widest"
+        {/* ── NAF Sector Importer Panel ─────────────────────────── */}
+        <AnimatePresence>
+          {showImport && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="overflow-hidden"
             >
-              <BarChart3 size={18} /> Pondérations
-            </button>
-            <button
-              onClick={() => setShowFilters(true)}
-              className={`flex-1 sm:flex-none px-6 py-4 rounded-[2rem] transition-all flex items-center justify-center gap-3 font-black text-[11px] uppercase tracking-widest relative
-                ${activeFilterCount > 0
-                  ? "bg-indigo-600 border border-indigo-500 text-white shadow-2xl shadow-indigo-600/30"
-                  : "bg-white/[0.03] border border-white/10 text-white hover:bg-white/10"
-                }
-              `}
-            >
-              <SlidersHorizontal size={18} /> Filtres
-              {activeFilterCount > 0 && (
-                <span className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-indigo-500 text-white text-[10px] font-black flex items-center justify-center border-2 border-[#0a0a0a] shadow-lg">
-                  {activeFilterCount}
-                </span>
-              )}
-            </button>
-            <button className="flex-1 sm:flex-none px-6 py-4 rounded-[2rem] bg-indigo-600/10 text-indigo-400 border border-indigo-500/20 hover:bg-indigo-600 hover:text-white transition-all flex items-center justify-center gap-3 font-black text-[11px] uppercase tracking-widest active:scale-95 shadow-2xl">
-              <Download size={18} /> <span className="sm:hidden lg:inline">Export</span>
-            </button>
+              <div className="p-4 rounded-2xl bg-indigo-500/5 border border-indigo-500/20 flex flex-col sm:flex-row gap-3 items-start sm:items-end">
+                <div className="flex-1 min-w-0">
+                  <label className="text-[9px] font-black text-indigo-400 uppercase tracking-widest block mb-1.5">Code NAF</label>
+                  <input
+                    value={importNaf}
+                    onChange={e => setImportNaf(e.target.value)}
+                    placeholder="ex: 62.01Z, 66.22Z, 49.41A…"
+                    className="w-full bg-black/40 border border-white/10 rounded-xl py-2.5 px-4 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-indigo-500/50 transition-all font-mono"
+                    onKeyDown={e => e.key === "Enter" && handleImportSector()}
+                  />
+                </div>
+                <div className="flex-none">
+                  <label className="text-[9px] font-black text-indigo-400 uppercase tracking-widest block mb-1.5">Quantité</label>
+                  <select
+                    value={importCount}
+                    onChange={e => setImportCount(Number(e.target.value))}
+                    className="bg-black/40 border border-white/10 rounded-xl py-2.5 px-3 text-sm text-gray-200 outline-none focus:border-indigo-500/50"
+                  >
+                    {[5, 10, 20, 30, 50].map(n => <option key={n} value={n}>{n} entités</option>)}
+                  </select>
+                </div>
+                <button
+                  onClick={handleImportSector}
+                  disabled={importing || !importNaf.trim()}
+                  className="flex-none px-5 py-2.5 rounded-xl bg-indigo-600 text-white font-black text-[10px] uppercase tracking-widest hover:bg-indigo-500 transition-all active:scale-95 disabled:opacity-40 flex items-center gap-2"
+                >
+                  {importing ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                  {importing ? "Chargement…" : "Importer"}
+                </button>
+                {importResult && (
+                  <div className={`text-[10px] font-black uppercase tracking-wider px-3 py-2 rounded-xl border flex-none
+                    ${importResult.added > 0 ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" : importResult.added === 0 ? "text-amber-400 bg-amber-500/10 border-amber-500/20" : "text-rose-400 bg-rose-500/10 border-rose-500/20"}`}
+                  >
+                    {importResult.added > 0 ? `+${importResult.added} ajoutées · ${importResult.total} total` : importResult.added === 0 ? "Déjà en base" : "Erreur"}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ── KPI Summary Strip ─────────────────────────────────── */}
+        {!loading && targets.length > 0 && (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {[
+              { label: "Score moyen", value: Math.round(targets.reduce((a, t) => a + t.globalScore, 0) / targets.length), suffix: "/100", color: "text-indigo-400" },
+              { label: "Action prioritaire", value: targets.filter(t => t.priorityLevel === "Action Prioritaire").length, suffix: "", color: "text-emerald-400" },
+              { label: "Secteurs couverts", value: new Set(targets.map(t => t.sector)).size, suffix: "", color: "text-purple-400" },
+              { label: "Régions", value: new Set(targets.map(t => t.region).filter(Boolean)).size, suffix: "", color: "text-amber-400" },
+            ].map(kpi => (
+              <div key={kpi.label} className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.02] border border-white/5">
+                <span className={`text-xl font-black ${kpi.color}`}>{kpi.value}{kpi.suffix}</span>
+                <span className="text-[9px] font-bold text-gray-500 uppercase tracking-wider leading-tight">{kpi.label}</span>
+              </div>
+            ))}
           </div>
-        </div>
+        )}
       </header>
 
       {/* ── Table Area ───────────────────────────────────────────── */}
       <div className="flex-1 bg-black/40 border border-white/10 rounded-[2rem] sm:rounded-[3rem] overflow-hidden flex flex-col shadow-2xl lg:backdrop-blur-3xl relative">
         {/* Table Header - Desktop Only */}
-        <div className="hidden lg:grid grid-cols-12 gap-4 px-10 py-6 border-b border-white/10 bg-white/[0.02] text-[11px] font-black text-gray-500 uppercase tracking-[0.2em]">
+        <div className="hidden lg:grid grid-cols-12 gap-3 px-6 py-3.5 border-b border-white/[0.06] bg-white/[0.015] text-[10px] font-black text-gray-500 uppercase tracking-[0.15em]">
           <div
-            className="col-span-3 flex items-center gap-3 cursor-pointer hover:text-white transition-colors"
+            className="col-span-3 flex items-center gap-2 cursor-pointer hover:text-white transition-colors"
             onClick={() => handleSort("name")}
           >
-            Entité {sortKey === "name" && <ArrowUpDown size={14} className="text-indigo-400" />}
+            Entité {sortKey === "name" && <ArrowUpDown size={12} className="text-indigo-400" />}
           </div>
           <div
-            className="col-span-2 flex items-center gap-3 cursor-pointer hover:text-white transition-colors"
+            className="col-span-2 flex items-center gap-2 cursor-pointer hover:text-white transition-colors"
             onClick={() => handleSort("sector")}
           >
-            Secteur {sortKey === "sector" && <ArrowUpDown size={14} className="text-indigo-400" />}
+            Secteur {sortKey === "sector" && <ArrowUpDown size={12} className="text-indigo-400" />}
           </div>
           <div
-            className="col-span-2 flex items-center gap-3 cursor-pointer hover:text-white transition-colors"
+            className="col-span-2 flex items-center gap-2 cursor-pointer hover:text-white transition-colors"
             onClick={() => handleSort("region")}
           >
-            Région {sortKey === "region" && <ArrowUpDown size={14} className="text-indigo-400" />}
+            Région {sortKey === "region" && <ArrowUpDown size={12} className="text-indigo-400" />}
           </div>
-          <div className="col-span-1 flex items-center gap-3 text-gray-700">
+          <div className="col-span-1 flex items-center gap-2 text-gray-600">
             EBITDA
           </div>
           <div
-            className="col-span-2 flex items-center gap-3 cursor-pointer hover:text-white transition-colors justify-end"
+            className="col-span-2 flex items-center gap-2 cursor-pointer hover:text-white transition-colors justify-end"
             onClick={() => handleSort("globalScore")}
           >
-            Score {sortKey === "globalScore" && <ArrowUpDown size={14} className="text-indigo-400" />}
+            Score {sortKey === "globalScore" && <ArrowUpDown size={12} className="text-indigo-400" />}
           </div>
           <div className="col-span-1 text-center">Statut</div>
-          <div className="col-span-1 text-right">Fiche</div>
+          <div className="col-span-1 text-right"></div>
         </div>
 
         {/* Table Body */}
         <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scrollbar">
           <PullToRefreshIndicator pullDistance={pullDistance} isRefreshing={isRefreshing} />
           {loading ? (
-            <div className="p-20 text-center text-gray-500 flex flex-col items-center justify-center h-full gap-8">
-              <div className="relative w-16 h-16">
-                <div className="absolute inset-0 border-4 border-indigo-500/10 rounded-full" />
-                <div className="absolute inset-0 border-t-4 border-indigo-500 rounded-full animate-spin shadow-[0_0_20px_rgba(79,70,229,0.5)]" />
+            <div className="p-16 text-center text-gray-500 flex flex-col items-center justify-center h-full gap-6">
+              <div className="relative w-12 h-12">
+                <div className="absolute inset-0 border-3 border-indigo-500/10 rounded-full" />
+                <div className="absolute inset-0 border-t-3 border-indigo-500 rounded-full animate-spin" />
               </div>
-              <span className="font-black uppercase tracking-[0.3em] text-[10px] text-white/50">Chargement des données EDRCF...</span>
+              <span className="font-black uppercase tracking-[0.2em] text-[10px] text-white/40">Chargement...</span>
             </div>
           ) : (
-            <div className="flex flex-col divide-y divide-white/[0.03]">
+            <div className="flex flex-col">
               <AnimatePresence mode="popLayout">
                 {filteredAndSortedTargets.map((target, idx) => {
                   const priority = PRIORITY_COLORS[target.priorityLevel] || PRIORITY_COLORS["Veille Passive"];
@@ -588,27 +739,27 @@ export default function TargetsPage() {
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       exit={{ opacity: 0 }}
-                      transition={{ duration: 0.3, delay: idx * 0.03 }}
+                      transition={{ duration: 0.2, delay: idx * 0.02 }}
                       key={target.id}
                       onClick={() => router.push(`/targets/${target.id}`)}
-                      className="flex flex-col lg:grid lg:grid-cols-12 gap-4 px-6 lg:px-10 py-5 lg:py-6 items-start lg:items-center hover:bg-white/[0.04] transition-all cursor-pointer group active:scale-[0.998] relative overflow-hidden"
+                      className="flex flex-col lg:grid lg:grid-cols-12 gap-3 lg:gap-3 px-4 sm:px-6 py-3.5 lg:py-4 items-start lg:items-center hover:bg-white/[0.03] transition-all cursor-pointer group border-b border-white/[0.03] last:border-b-0"
                     >
                       {/* Entity */}
-                      <div className="w-full lg:col-span-3 flex items-center gap-4">
-                        <div className="w-11 h-11 lg:w-12 lg:h-12 rounded-xl lg:rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-gray-500 group-hover:text-indigo-400 group-hover:bg-indigo-500/10 group-hover:border-indigo-500/30 transition-all shadow-xl shrink-0 relative">
-                          <Building size={22} />
+                      <div className="w-full lg:col-span-3 flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-white/5 border border-white/[0.06] flex items-center justify-center text-gray-500 group-hover:text-indigo-400 group-hover:bg-indigo-500/10 group-hover:border-indigo-500/30 transition-all shrink-0 relative">
+                          <Building size={18} />
                           {target.group?.is_group && (
-                            <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-purple-500/20 border border-purple-500/30 flex items-center justify-center" title="Groupe">
-                              <Network size={8} className="text-purple-400" />
+                            <div className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-purple-500/20 border border-purple-500/30 flex items-center justify-center" title="Groupe">
+                              <Network size={7} className="text-purple-400" />
                             </div>
                           )}
                         </div>
-                        <div className="min-w-0">
-                          <div className="font-black text-white text-sm lg:text-base group-hover:text-indigo-400 transition-colors tracking-tighter leading-tight mb-1 truncate">
+                        <div className="min-w-0 flex-1">
+                          <div className="font-bold text-white text-sm group-hover:text-indigo-400 transition-colors tracking-tight leading-tight truncate">
                             {target.name}
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className={`px-2 py-0.5 rounded-lg text-[8px] font-black uppercase tracking-widest border ${structureClass}`}>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className={`px-1.5 py-px rounded text-[7px] font-black uppercase tracking-wider border ${structureClass}`}>
                               {target.structure}
                             </span>
                           </div>
@@ -618,7 +769,7 @@ export default function TargetsPage() {
                       {/* Sector */}
                       <div className="w-full lg:col-span-2 flex items-center justify-between lg:block">
                         <span className="lg:hidden text-[9px] font-black text-gray-600 uppercase tracking-widest">Secteur</span>
-                        <span className="px-3 py-1 lg:py-1.5 rounded-xl text-[10px] font-black tracking-widest uppercase bg-indigo-500/5 text-indigo-400/80 border border-indigo-500/10 group-hover:border-indigo-500/30 transition-all">
+                        <span className="px-2.5 py-1 rounded-lg text-[10px] font-bold tracking-tight bg-indigo-500/5 text-indigo-400/80 border border-indigo-500/10">
                           {target.sector}
                         </span>
                       </div>
@@ -626,29 +777,29 @@ export default function TargetsPage() {
                       {/* Region */}
                       <div className="w-full lg:col-span-2 flex items-center justify-between lg:block">
                         <span className="lg:hidden text-[9px] font-black text-gray-600 uppercase tracking-widest">Région</span>
-                        <span className="text-sm text-gray-300 font-bold tracking-tight">{target.region || "—"}</span>
+                        <span className="text-xs text-gray-400 font-medium">{target.region || "—"}</span>
                       </div>
 
                       {/* EBITDA */}
                       <div className="w-full lg:col-span-1 flex items-center justify-between lg:block">
                         <span className="lg:hidden text-[9px] font-black text-gray-600 uppercase tracking-widest">EBITDA</span>
-                        <span className="text-sm text-gray-300 font-bold tracking-tight">{target.financials?.ebitda || "—"}</span>
+                        <span className="text-xs text-gray-300 font-bold tracking-tight">{target.financials?.ebitda || "—"}</span>
                       </div>
 
                       {/* Score */}
-                      <div className="w-full lg:col-span-2 flex items-center justify-between lg:justify-end lg:text-right">
+                      <div className="w-full lg:col-span-2 flex items-center justify-between lg:justify-end">
                         <span className="lg:hidden text-[9px] font-black text-gray-600 uppercase tracking-widest">Score</span>
-                        <div className="flex items-center gap-3 lg:flex-col lg:items-end lg:gap-0">
-                          <span className="text-2xl lg:text-3xl font-black bg-clip-text text-transparent bg-gradient-to-b from-white to-gray-800 leading-none tracking-tighter">
-                            {target.globalScore}
-                          </span>
-                          <div className="hidden lg:block w-16 h-1.5 bg-white/5 rounded-full mt-2 overflow-hidden p-[1px]">
+                        <div className="flex items-center gap-2">
+                          <div className="hidden lg:block w-12 h-1 bg-white/5 rounded-full overflow-hidden">
                             <motion.div
                               initial={{ width: 0 }}
                               animate={{ width: `${target.globalScore}%` }}
-                              className="h-full bg-indigo-50 shadow-[0_0_10px_rgba(79,70,229,0.5)] rounded-full"
+                              className={`h-full rounded-full ${target.globalScore >= 65 ? 'bg-emerald-500' : target.globalScore >= 45 ? 'bg-indigo-500' : target.globalScore >= 25 ? 'bg-amber-500' : 'bg-gray-600'}`}
                             />
                           </div>
+                          <span className={`text-lg font-black leading-none tracking-tighter ${target.globalScore >= 65 ? 'text-emerald-400' : target.globalScore >= 45 ? 'text-white' : 'text-gray-400'}`}>
+                            {target.globalScore}
+                          </span>
                         </div>
                       </div>
 
@@ -656,16 +807,16 @@ export default function TargetsPage() {
                       <div className="w-full lg:col-span-1 flex items-center justify-between lg:justify-center">
                         <span className="lg:hidden text-[9px] font-black text-gray-600 uppercase tracking-widest">Statut</span>
                         <span
-                          className={`px-2 py-1 rounded-xl text-[8px] font-black uppercase tracking-widest border text-center ${priority.bg} ${priority.text} ${priority.border}`}
+                          className={`px-2 py-0.5 rounded-lg text-[7px] font-black uppercase tracking-wider border ${priority.bg} ${priority.text} ${priority.border}`}
                         >
                           {target.priorityLevel === "Action Prioritaire" ? "Action" : target.priorityLevel === "Veille Passive" ? "Veille" : target.priorityLevel}
                         </span>
                       </div>
 
                       {/* Arrow */}
-                      <div className="absolute right-6 top-1/2 -translate-y-1/2 lg:relative lg:right-0 lg:top-0 lg:translate-y-0 lg:col-span-1 flex justify-end">
-                        <div className="w-8 h-8 lg:w-9 lg:h-9 rounded-xl lg:rounded-2xl bg-white/5 flex items-center justify-center text-gray-600 group-hover:text-white group-hover:bg-indigo-600 transition-all border border-white/5 group-hover:border-indigo-400 shadow-2xl active:scale-90">
-                          <ChevronRight size={18} />
+                      <div className="absolute right-4 top-1/2 -translate-y-1/2 lg:relative lg:right-0 lg:top-0 lg:translate-y-0 lg:col-span-1 flex justify-end">
+                        <div className="w-7 h-7 rounded-lg bg-white/[0.03] flex items-center justify-center text-gray-600 group-hover:text-white group-hover:bg-indigo-600 transition-all border border-white/5 group-hover:border-indigo-400">
+                          <ChevronRight size={16} />
                         </div>
                       </div>
                     </motion.div>
@@ -674,14 +825,14 @@ export default function TargetsPage() {
               </AnimatePresence>
 
               {filteredAndSortedTargets.length === 0 && !loading && (
-                <div className="p-32 text-center flex flex-col items-center gap-8">
-                  <div className="w-24 h-24 rounded-[2rem] bg-white/5 border border-white/10 flex items-center justify-center">
-                    <Target size={48} className="text-gray-800" />
+                <div className="p-16 sm:p-24 text-center flex flex-col items-center gap-5">
+                  <div className="w-16 h-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
+                    <Target size={32} className="text-gray-700" />
                   </div>
                   <div>
-                    <p className="font-black text-2xl text-white mb-3 tracking-tighter">Aucun résultat</p>
-                    <p className="text-gray-500 font-medium max-w-sm mx-auto">
-                      Aucune entité stratégique ne correspond aux paramètres actuels. Élargissez vos filtres ou ajustez le seuil de score.
+                    <p className="font-black text-lg text-white mb-2 tracking-tighter">Aucun résultat</p>
+                    <p className="text-gray-500 text-sm font-medium max-w-xs mx-auto">
+                      Ajustez vos filtres ou le seuil de score.
                     </p>
                   </div>
                 </div>

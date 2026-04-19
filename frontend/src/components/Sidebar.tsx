@@ -50,6 +50,9 @@ export default function Sidebar() {
     },
   ];
 
+  const notifGranted = notifPermission === "granted";
+  const notifDenied = notifPermission === "denied";
+
   return (
     <aside className="fixed left-0 top-0 h-screen w-72 bg-black/40 backdrop-blur-3xl border-r border-white/5 flex flex-col p-6 z-[100] hover:border-white/10 transition-colors">
       {/* Branding */}
@@ -96,7 +99,6 @@ export default function Sidebar() {
             ⌘K
           </span>
         </div>
-      </div>
 
       {/* Primary Navigation */}
       <nav className="flex-1 flex flex-col gap-1.5">

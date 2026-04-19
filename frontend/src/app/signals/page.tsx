@@ -3,7 +3,7 @@
 import { useState, useMemo, useRef, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { Activity, Bell, Filter, Search, ShieldAlert, ArrowUpRight, Clock, MapPin, Zap, TrendingUp, Globe, AlertCircle, Radio, ExternalLink, ChevronDown, ChevronUp, Hash } from "lucide-react";
+import { Activity, Bell, Filter, Search, ShieldAlert, ArrowUpRight, Clock, MapPin, Zap, TrendingUp, Globe, AlertCircle, Radio, ExternalLink, ChevronDown, ChevronUp, Hash, Download, BellRing } from "lucide-react";
 import Link from "next/link";
 import { useSignals } from "@/lib/queries/useSignals";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
@@ -106,9 +106,40 @@ export default function SignalsPage() {
                           s.dimension.toLowerCase().includes(search.toLowerCase()) ||
                           (s.target_name || "").toLowerCase().includes(search.toLowerCase());
       const matchFilter = filter === "All" || s.severity === filter.toLowerCase();
-      return matchSearch && matchFilter;
+      const matchDimension = dimensionFilter === "All" || (s.dimension || s.type) === dimensionFilter;
+      return matchSearch && matchFilter && matchDimension;
     });
-  }, [search, filter, signals]);
+  }, [search, filter, dimensionFilter, signals]);
+
+  const handleExportSignals = () => {
+    if (filteredSignals.length === 0) return;
+    const date = new Date().toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
+    const lines = [
+      `EDRCF 6.0 — Rapport Intelligence Signaux`,
+      `Généré le ${date}`,
+      `${filteredSignals.length} signaux | Filtre: ${filter} | Dimension: ${DIMENSION_FR[dimensionFilter] || dimensionFilter}`,
+      `${"─".repeat(60)}`,
+      "",
+    ];
+    filteredSignals.forEach((s, i) => {
+      lines.push(`[${i + 1}] ${s.title}`);
+      lines.push(`    Sévérité : ${SEVERITY_FR[s.severity] || s.severity} | Dimension : ${DIMENSION_FR[s.dimension || ""] || s.dimension || s.type}`);
+      if (s.target_name) lines.push(`    Cible    : ${s.target_name}`);
+      lines.push(`    Source   : ${s.source}${s.source_url ? ` (${s.source_url})` : ""}`);
+      if (s.points !== undefined) lines.push(`    Score    : +${s.points} pts`);
+      lines.push(`    Date     : ${s.time}`);
+      lines.push("");
+    });
+    lines.push(`${"─".repeat(60)}`);
+    lines.push(`© Edmond de Rothschild Corporate Finance — EDRCF 6.0`);
+    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `EDRCF_Signaux_${new Date().toISOString().slice(0, 10)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const catalogEntries = useMemo(() => {
     const entries: SignalCatalogEntry[] = [];
@@ -121,12 +152,12 @@ export default function SignalsPage() {
   }, [catalog]);
 
   return (
-    <div className="flex flex-col gap-8 w-full max-w-7xl mx-auto py-4 h-[calc(100vh-8rem)]">
+    <div className="flex flex-col gap-5 sm:gap-6 lg:gap-8 w-full py-4 lg:h-[calc(100dvh-6rem)]">
       {/* Header */}
-      <header className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 shrink-0">
+      <header className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 sm:gap-6 shrink-0">
         <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-4">
-            <h1 className="text-3xl md:text-4xl font-black tracking-tight text-white flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-3 sm:gap-4">
+            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-black tracking-tight text-white flex items-center gap-4">
               Signaux de Marche
             </h1>
             <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-[10px] text-indigo-400 font-black uppercase tracking-[0.2em]">
@@ -139,7 +170,7 @@ export default function SignalsPage() {
         </div>
 
         <div className="flex flex-col sm:flex-row gap-3">
-          <div className="relative group w-full sm:w-80">
+          <div className="relative group w-full sm:w-64 lg:w-80">
             <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 group-focus-within:text-indigo-400 transition-colors">
                <Search size={18} />
             </span>
@@ -148,16 +179,20 @@ export default function SignalsPage() {
                value={search}
                onChange={(e) => setSearch(e.target.value)}
                placeholder="Rechercher un signal, une cible..."
-               className="w-full bg-white/[0.03] border border-white/10 rounded-2xl py-3 pl-12 pr-4 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-indigo-500/50 focus:bg-white/[0.05] transition-all"
+               className="w-full bg-white/3 border border-white/10 rounded-2xl py-3 pl-12 pr-4 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-indigo-500/50 focus:bg-white/5 transition-all"
             />
           </div>
-          <button className="px-5 py-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[10px] font-black uppercase tracking-widest text-white hover:bg-white/10 transition-all flex items-center justify-center gap-2">
-            <AlertCircle size={16} /> <span className="sm:hidden lg:inline">Alertes</span>
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent("edrcf-request-notif"))}
+            className="px-5 py-3 rounded-2xl bg-white/3 border border-white/10 text-[10px] font-black uppercase tracking-widest text-white hover:bg-indigo-600 hover:border-indigo-500 transition-all flex items-center justify-center gap-2 active:scale-95"
+            title="Activer les notifications push"
+          >
+            <BellRing size={16} /> <span className="sm:hidden lg:inline">Alertes</span>
           </button>
         </div>
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 flex-1 min-h-0">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 lg:gap-8 flex-1 min-h-0">
 
         {/* Main Feed */}
         <div className="lg:col-span-8 bg-black/40 border border-white/10 rounded-[2.5rem] overflow-hidden flex flex-col shadow-2xl lg:backdrop-blur-xl">
@@ -172,7 +207,7 @@ export default function SignalsPage() {
                   <button
                     key={lvl.key}
                     onClick={() => setFilter(lvl.key)}
-                    className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border flex items-center gap-2
+                    className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border flex items-center gap-1.5
                       ${filter === lvl.key
                         ? "bg-indigo-500/10 border-indigo-500/30 text-indigo-400"
                         : "bg-white/5 border-transparent text-gray-500 hover:bg-white/10 hover:text-gray-300"
@@ -185,10 +220,34 @@ export default function SignalsPage() {
                     </span>
                   </button>
                 ))}
-             </div>
-             <div className="text-[10px] font-black text-gray-600 uppercase tracking-widest">
-                {signals.length} signaux detectes
-             </div>
+              </div>
+              <div className="text-[10px] font-black text-gray-600 uppercase tracking-widest">
+                {filteredSignals.length}/{signals.length} signaux
+              </div>
+            </div>
+            {/* Dimension row */}
+            {Object.keys(dimensionCounts).length > 0 && (
+              <div className="flex gap-1.5 flex-wrap">
+                <button
+                  onClick={() => setDimensionFilter("All")}
+                  className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all border
+                    ${dimensionFilter === "All" ? "bg-purple-500/10 border-purple-500/20 text-purple-400" : "border-transparent text-gray-600 hover:text-gray-400"}`}
+                >
+                  Toutes dimensions
+                </button>
+                {Object.entries(dimensionCounts).sort((a,b) => b[1]-a[1]).map(([dim, cnt]) => (
+                  <button
+                    key={dim}
+                    onClick={() => setDimensionFilter(dimensionFilter === dim ? "All" : dim)}
+                    className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all border flex items-center gap-1
+                      ${dimensionFilter === dim ? "bg-purple-500/10 border-purple-500/20 text-purple-400" : "border-transparent text-gray-600 hover:text-gray-400"}`}
+                  >
+                    {DIMENSION_FR[dim] || dim}
+                    <span className="text-[8px] opacity-60">{cnt}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
@@ -201,7 +260,7 @@ export default function SignalsPage() {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.98 }}
                   key={signal.id}
-                  className="p-6 rounded-[2rem] bg-white/[0.02] border border-white/10 hover:border-indigo-500/30 transition-all group flex gap-6 items-start relative overflow-hidden active:scale-[0.99]"
+                  className="p-4 sm:p-5 lg:p-6 rounded-xl sm:rounded-2xl lg:rounded-[2rem] bg-white/[0.02] border border-white/10 hover:border-indigo-500/30 transition-all group flex gap-3 sm:gap-4 lg:gap-6 items-start relative overflow-hidden active:scale-[0.99]"
                 >
                   <div className={`absolute top-0 left-0 w-1 h-full
                     ${signal.severity === 'high' ? 'bg-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.5)]' : ''}
@@ -209,8 +268,8 @@ export default function SignalsPage() {
                     ${signal.severity === 'low' ? 'bg-gray-600' : ''}
                   `} />
 
-                  <div className="flex-shrink-0">
-                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center border transition-all
+                  <div className="flex-shrink-0 hidden sm:block">
+                    <div className={`w-11 h-11 sm:w-12 sm:h-12 lg:w-14 lg:h-14 rounded-xl sm:rounded-2xl flex items-center justify-center border transition-all
                       ${signal.severity === 'high' ? 'bg-rose-500/10 border-rose-500/20 text-rose-400 group-hover:bg-rose-600 group-hover:text-white' : ''}
                       ${signal.severity === 'medium' ? 'bg-amber-500/10 border-amber-500/20 text-amber-400 group-hover:bg-amber-600 group-hover:text-white' : ''}
                       ${signal.severity === 'low' ? 'bg-white/5 border-white/5 text-gray-500' : ''}
@@ -292,17 +351,17 @@ export default function SignalsPage() {
                     </div>
                   </div>
 
-                  <div className="flex items-center self-center">
+                  <div className="hidden sm:flex items-center self-center shrink-0">
                     {signal.target_id ? (
                       <Link
                         href={`/targets/${signal.target_id}`}
-                        className="w-12 h-12 rounded-2xl bg-white/5 group-hover:bg-indigo-600 text-gray-600 group-hover:text-white flex items-center justify-center transition-all border border-white/10 group-hover:border-indigo-400 shadow-xl active:scale-90"
+                        className="w-10 h-10 lg:w-12 lg:h-12 rounded-xl lg:rounded-2xl bg-white/5 group-hover:bg-indigo-600 text-gray-600 group-hover:text-white flex items-center justify-center transition-all border border-white/10 group-hover:border-indigo-400 shadow-xl active:scale-90"
                       >
-                        <ArrowUpRight size={24} />
+                        <ArrowUpRight size={20} />
                       </Link>
                     ) : (
-                      <div className="w-12 h-12 rounded-2xl bg-white/5 text-gray-700 flex items-center justify-center border border-white/10">
-                        <ArrowUpRight size={24} />
+                      <div className="w-10 h-10 lg:w-12 lg:h-12 rounded-xl lg:rounded-2xl bg-white/5 text-gray-700 flex items-center justify-center border border-white/10">
+                        <ArrowUpRight size={20} />
                       </div>
                     )}
                   </div>
@@ -316,7 +375,7 @@ export default function SignalsPage() {
                     <ShieldAlert size={40} className="text-gray-700" />
                  </div>
                  <div>
-                   <h2 className="text-white font-black text-2xl mb-2 tracking-tighter">Aucun Signal Detecte</h2>
+                   <h2 className="text-white font-black text-xl sm:text-2xl mb-2 tracking-tighter">Aucun Signal Detecte</h2>
                    <p className="text-gray-500 max-w-sm mx-auto font-medium">Aucun signal ne correspond a vos filtres actuels. Modifiez vos criteres de recherche.</p>
                  </div>
               </div>
@@ -335,7 +394,7 @@ export default function SignalsPage() {
         </div>
 
         {/* Sidebar Analytics */}
-        <div className="lg:col-span-4 flex flex-col gap-8 overflow-y-auto custom-scrollbar">
+        <div className="lg:col-span-4 flex flex-col gap-5 sm:gap-6 lg:gap-8 overflow-y-auto custom-scrollbar">
           {/* Sector Heat */}
           <div className="p-8 rounded-[2.5rem] bg-black/40 border border-white/10 shadow-2xl lg:backdrop-blur-xl flex-1 flex flex-col">
             <h3 className="text-[10px] font-black text-gray-500 mb-8 uppercase tracking-[0.2em] flex items-center gap-2">
@@ -379,7 +438,7 @@ export default function SignalsPage() {
              <div className="space-y-4">
                 {Object.entries(dimensionCounts).length > 0 ? (
                   Object.entries(dimensionCounts).sort((a, b) => b[1] - a[1]).map(([dim, count]) => (
-                    <div key={dim} className="flex items-center justify-between p-3 rounded-2xl bg-white/[0.03] border border-white/5 hover:border-indigo-500/20 transition-all group">
+                    <div key={dim} className="flex items-center justify-between p-3 rounded-2xl bg-white/3 border border-white/5 hover:border-indigo-500/20 transition-all group">
                       <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest group-hover:text-white transition-colors">
                         {DIMENSION_FR[dim] || dim}
                       </span>
@@ -416,7 +475,7 @@ export default function SignalsPage() {
                 >
                   <div className="space-y-3 mt-6 max-h-[400px] overflow-y-auto custom-scrollbar pr-1">
                     {catalogEntries.length > 0 ? catalogEntries.map((entry, i) => (
-                      <div key={entry.id || i} className="p-4 rounded-2xl bg-white/[0.03] border border-white/5 hover:border-indigo-500/20 transition-all">
+                      <div key={entry.id || i} className="p-4 rounded-2xl bg-white/3 border border-white/5 hover:border-indigo-500/20 transition-all">
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">
                             {DIMENSION_FR[entry.dimension] || entry.dimension}
@@ -446,8 +505,12 @@ export default function SignalsPage() {
             </AnimatePresence>
           </div>
 
-          <button className="w-full py-4 rounded-3xl bg-indigo-600 text-white font-black text-[10px] uppercase tracking-widest hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-600/20 active:scale-95">
-             Telecharger le Rapport d&apos;Intelligence
+          <button
+            onClick={handleExportSignals}
+            disabled={filteredSignals.length === 0}
+            className="w-full py-4 rounded-3xl bg-indigo-600 text-white font-black text-[10px] uppercase tracking-widest hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-600/20 active:scale-95 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Download size={14} /> Télécharger le Rapport ({filteredSignals.length})
           </button>
         </div>
 
