@@ -25,7 +25,7 @@ from loader import AgentSpec, get_agent, list_agents, load_agents
 from ollama_client import OllamaClient
 from tools import execute_tool, get_tool_schemas
 from ingestion.engine import SOURCES, freshness_report, list_jobs, run_source, start_scheduler, stop_scheduler
-from ingestion.codegen import generate_fetcher, list_specs, load_spec
+from ingestion.codegen import discover_and_generate, generate_fetcher, list_specs, load_spec
 
 logging.basicConfig(
     level="INFO",
@@ -219,8 +219,14 @@ async def ingestion_spec_detail(source_id: str) -> dict:
 
 @app.post("/ingestion/generate/{source_id}", dependencies=[Depends(require_api_key)])
 async def ingestion_generate_fetcher(source_id: str) -> dict:
-    """Codegen — l'agent lead-data-engineer écrit le .py fetcher à partir de spec YAML."""
+    """Codegen one-shot."""
     result = await generate_fetcher(source_id)
     if "error" in result and "file" not in result:
         raise HTTPException(422, result["error"])
     return result
+
+
+@app.post("/ingestion/discover/{source_id}", dependencies=[Depends(require_api_key)])
+async def ingestion_discover(source_id: str, iterations: int = 3) -> dict:
+    """Mode C : generate + test_endpoint + retry avec feedback (max N iter)."""
+    return await discover_and_generate(source_id, max_iterations=iterations)
