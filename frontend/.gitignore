@@ -17,6 +17,10 @@
 /.next/
 /out/
 
+# opennext / cloudflare workers
+/.open-next/
+/.wrangler/
+
 # production
 /build
 
@@ -39,3 +43,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# serwist service worker (generated at build time)
+/public/sw.js
+/public/sw.js.map

@@ -1,6 +1,10 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useTargets } from "@/lib/queries/useTargets";
+import { usePullToRefresh } from "@/hooks/usePullToRefresh";
+import PullToRefreshIndicator from "@/components/ui/PullToRefreshIndicator";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Target,
@@ -55,10 +59,16 @@ function getScoreThresholdLabel(score: number) {
 }
 
 export default function TargetsPage() {
-  const [targets, setTargets] = useState<TargetData[]>([]);
-  const [totalCount, setTotalCount] = useState(0);
-  const [apiFilters, setApiFilters] = useState<FilterOptions | null>(null);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const { data, isLoading: loading } = useTargets();
+  const targets = data?.data || [];
+  const handleRefresh = useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: ["targets"] });
+  }, [queryClient]);
+  const { isRefreshing, pullDistance } = usePullToRefresh(scrollRef, handleRefresh);
+  const totalCount = data?.total || targets.length;
+  const apiFilters = data?.filters || null;
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("globalScore");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
@@ -80,34 +90,14 @@ export default function TargetsPage() {
 
   const router = useRouter();
 
-  const fetchTargets = useCallback(() => {
-    setLoading(true);
-    fetch(`/api/targets`)
-      .then((res) => res.json())
-      .then((data) => {
-        setTargets(data.data || []);
-        setTotalCount(data.total || data.data?.length || 0);
-        if (data.filters) setApiFilters(data.filters);
-        setLoading(false);
-      })
-      .catch((err) => {
-        console.error(err);
-        setLoading(false);
-      });
-  }, []);
-
-  useEffect(() => {
-    fetchTargets();
-  }, [fetchTargets]);
-
   // Re-fetch targets when copilot injects new ones from Pappers
   useEffect(() => {
     const handleTargetsUpdated = () => {
-      fetchTargets();
+      queryClient.invalidateQueries({ queryKey: ["targets"] });
     };
     window.addEventListener("targets-updated", handleTargetsUpdated);
     return () => window.removeEventListener("targets-updated", handleTargetsUpdated);
-  }, [fetchTargets]);
+  }, [queryClient]);
 
   // Fetch scoring config
   useEffect(() => {
@@ -169,7 +159,7 @@ export default function TargetsPage() {
       });
       setScoringConfig(payload);
       setShowWeights(false);
-      fetchTargets();
+      queryClient.invalidateQueries({ queryKey: ["targets"] });
     } catch (err) {
       console.error(err);
     } finally {
@@ -691,7 +681,7 @@ export default function TargetsPage() {
       </header>
 
       {/* ── Table Area ───────────────────────────────────────────── */}
-      <div className="flex-1 bg-black/30 border border-white/[0.06] rounded-2xl overflow-hidden flex flex-col backdrop-blur-xl relative">
+      <div className="flex-1 bg-black/40 border border-white/10 rounded-[2rem] sm:rounded-[3rem] overflow-hidden flex flex-col shadow-2xl lg:backdrop-blur-3xl relative">
         {/* Table Header - Desktop Only */}
         <div className="hidden lg:grid grid-cols-12 gap-3 px-6 py-3.5 border-b border-white/[0.06] bg-white/[0.015] text-[10px] font-black text-gray-500 uppercase tracking-[0.15em]">
           <div
@@ -726,7 +716,8 @@ export default function TargetsPage() {
         </div>
 
         {/* Table Body */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scrollbar">
+          <PullToRefreshIndicator pullDistance={pullDistance} isRefreshing={isRefreshing} />
           {loading ? (
             <div className="p-16 text-center text-gray-500 flex flex-col items-center justify-center h-full gap-6">
               <div className="relative w-12 h-12">

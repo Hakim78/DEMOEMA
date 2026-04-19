@@ -46,21 +46,27 @@
 @layer base {
   html {
     -webkit-tap-highlight-color: transparent;
-    overflow-x: clip;
-    overflow-y: scroll;
-    height: auto;
+    -webkit-text-size-adjust: 100%;
   }
 
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
-    height: auto;
-    min-height: 100dvh;
-    @apply antialiased selection:bg-indigo-500/30 font-sans;
+    @apply antialiased selection:bg-indigo-500/30 font-sans overflow-x-hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
   }
 
   h1, h2, h3, h4, h5, h6 {
     @apply font-heading tracking-tight;
+  }
+
+  /* Ensure minimum touch target size on mobile */
+  @media (pointer: coarse) {
+    button, a, [role="button"] {
+      min-height: 44px;
+      min-width: 44px;
+    }
   }
 }
 
@@ -68,8 +74,21 @@
   .glass {
     @apply bg-black/40 border border-white/10 backdrop-blur-xl shadow-2xl;
   }
-  
+
+  .glass-mobile {
+    @apply bg-black/70 border border-white/10 shadow-2xl;
+  }
+
   .premium-gradient {
     @apply bg-gradient-to-br from-indigo-500 to-purple-600;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

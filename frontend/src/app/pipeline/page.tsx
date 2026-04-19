@@ -6,6 +6,8 @@ import { Layers, Plus, MoreHorizontal, Activity, Target, Zap, Clock, ShieldCheck
 import { useRouter } from "next/navigation";
 import { DragDropContext, Droppable, Draggable, DropResult } from "@hello-pangea/dnd";
 import { Target as TargetType } from "@/types";
+import { usePipeline, useMoveCard } from "@/lib/queries/usePipeline";
+import { hapticMedium } from "@/lib/haptics";
 
 interface PipelineCard {
   id: string;
@@ -24,8 +26,6 @@ interface Column {
   color: string;
   cards: PipelineCard[];
 }
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 const STAGE_COLORS: Record<string, { bg: string; border: string; text: string; indicator: string; cardHover: string }> = {
   indigo:  { bg: "bg-indigo-500/10",  border: "border-indigo-500/20",  text: "text-indigo-400",  indicator: "bg-indigo-500",  cardHover: "hover:border-indigo-500/40" },
@@ -50,12 +50,14 @@ function parseEbitdaValue(ebitda: string): number {
 }
 
 export default function PipelinePage() {
-  const [columns, setColumns] = useState<Column[]>([]);
   const [isClient, setIsClient] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [processingAction, setProcessingAction] = useState<string | null>(null);
   const [notification, setNotification] = useState<string | null>(null);
   const router = useRouter();
+
+  const { data, isLoading } = usePipeline();
+  const columns = data?.data ?? [];
+  const moveCard = useMoveCard();
 
   useEffect(() => {
     if (notification) {
@@ -74,17 +76,6 @@ export default function PipelinePage() {
 
   useEffect(() => {
     setIsClient(true);
-    setLoading(true);
-    fetch(`/api/pipeline`)
-      .then(res => res.json())
-      .then(json => {
-        setColumns(json.data || []);
-        setLoading(false);
-      })
-      .catch(err => {
-        console.error("Failed to fetch pipeline:", err);
-        setLoading(false);
-      });
   }, []);
 
   const pipelineStats = useMemo(() => {
@@ -103,28 +94,17 @@ export default function PipelinePage() {
     if (!destination) return;
     if (destination.droppableId === source.droppableId && destination.index === source.index) return;
 
-    const sourceColIndex = columns.findIndex(col => col.id === source.droppableId);
-    const destColIndex = columns.findIndex(col => col.id === destination.droppableId);
+    const sourceCol = columns.find(col => col.id === source.droppableId);
+    if (!sourceCol) return;
+    const card = sourceCol.cards[source.index];
 
-    const sourceCol = columns[sourceColIndex];
-    const destCol = columns[destColIndex];
-
-    const sourceCards = Array.from(sourceCol.cards);
-    const [movedCard] = sourceCards.splice(source.index, 1);
-
-    if (sourceColIndex === destColIndex) {
-      sourceCards.splice(destination.index, 0, movedCard);
-      const newColumns = [...columns];
-      newColumns[sourceColIndex] = { ...sourceCol, cards: sourceCards };
-      setColumns(newColumns);
-    } else {
-      const destCards = Array.from(destCol.cards);
-      destCards.splice(destination.index, 0, movedCard);
-      const newColumns = [...columns];
-      newColumns[sourceColIndex] = { ...sourceCol, cards: sourceCards };
-      newColumns[destColIndex] = { ...destCol, cards: destCards };
-      setColumns(newColumns);
-    }
+    hapticMedium();
+    moveCard.mutate({
+      cardId: card.id,
+      fromStage: source.droppableId,
+      toStage: destination.droppableId,
+      newIndex: destination.index,
+    });
   };
 
   if (!isClient) return null;
@@ -174,13 +154,13 @@ export default function PipelinePage() {
 
       <div className="flex-1 overflow-x-auto pb-20 px-4 custom-scrollbar">
         <DragDropContext onDragEnd={onDragEnd}>
-          <div className="flex gap-3 sm:gap-4 lg:gap-5 h-full min-w-max">
+          <div className="flex gap-4 sm:gap-6 lg:gap-8 h-full min-w-max">
              {columns.map((column) => {
               const colors = STAGE_COLORS[column.color] || STAGE_COLORS.indigo;
               return (
-              <div key={column.id} className="w-[260px] sm:w-[280px] lg:w-[300px] flex flex-col h-full bg-black/40 rounded-2xl sm:rounded-3xl border border-white/10 shadow-2xl overflow-hidden backdrop-blur-3xl group/col shrink-0">
+              <div key={column.id} className="w-[260px] sm:w-[300px] lg:w-[340px] flex flex-col h-full bg-black/40 rounded-[2rem] sm:rounded-[3rem] border border-white/10 shadow-2xl overflow-hidden lg:backdrop-blur-3xl group/col shrink-0">
 
-                <div className="px-4 py-3 sm:px-5 sm:py-4 lg:px-6 lg:py-5 flex items-center justify-between">
+                <div className="p-4 sm:p-6 lg:p-8 pb-3 sm:pb-5 flex items-center justify-between">
                   <div className="flex items-center gap-4">
                     <div className={`w-2 h-8 rounded-full ${colors.indicator}`} />
                     <h3 className="font-black text-white text-[11px] uppercase tracking-[0.3em]">{column.title}</h3>
@@ -206,7 +186,7 @@ export default function PipelinePage() {
                               ref={provided.innerRef}
                               {...provided.draggableProps}
                               {...provided.dragHandleProps}
-                              className={`group p-4 sm:p-5 lg:p-6 rounded-2xl sm:rounded-3xl bg-white/[0.03] border border-white/10 ${colors.cardHover} cursor-grab active:cursor-grabbing transition-all shadow-xl backdrop-blur-2xl relative overflow-hidden
+                              className={`group p-4 sm:p-6 lg:p-8 rounded-[1.5rem] sm:rounded-[2rem] lg:rounded-[2.5rem] bg-white/[0.03] border border-white/10 ${colors.cardHover} cursor-grab active:cursor-grabbing transition-all shadow-xl lg:backdrop-blur-2xl relative overflow-hidden
                                 ${snapshot.isDragging ? "rotate-2 scale-[1.05] shadow-[0_40px_80px_rgba(0,0,0,0.8)] !border-indigo-500/60 !bg-indigo-500/10 z-[1000]" : ""}
                               `}
                             >
@@ -278,7 +258,7 @@ export default function PipelinePage() {
       <motion.div
         initial={{ y: 50, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
-        className="fixed bottom-4 left-3 right-3 lg:left-72 lg:right-auto lg:-translate-x-0 sm:bottom-8 flex flex-wrap sm:flex-nowrap justify-center gap-3 sm:gap-5 lg:gap-8 px-4 py-3 sm:px-6 lg:px-8 sm:py-4 rounded-2xl sm:rounded-3xl bg-black/80 sm:bg-black/60 border border-white/10 backdrop-blur-3xl shadow-2xl z-50 items-center ring-1 ring-white/10 lg:w-[calc(100%-19rem)] lg:mx-auto"
+        className="fixed bottom-6 sm:bottom-10 left-4 right-4 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 flex flex-wrap justify-center gap-4 sm:gap-8 lg:gap-12 px-6 sm:px-10 py-4 sm:py-5 rounded-2xl sm:rounded-[2.5rem] bg-black/80 sm:bg-black/60 border border-white/10 backdrop-blur-3xl shadow-2xl z-50 items-center ring-1 ring-white/10"
       >
         <div className="flex items-center gap-2 sm:gap-4">
           <Activity size={16} className="text-indigo-400" />

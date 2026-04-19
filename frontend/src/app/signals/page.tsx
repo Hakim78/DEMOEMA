@@ -1,35 +1,36 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useRef, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { Activity, Bell, Filter, Search, ShieldAlert, ArrowUpRight, Clock, MapPin, Zap, TrendingUp, Globe, AlertCircle, Radio, ExternalLink, ChevronDown, ChevronUp, Hash, Download, BellRing } from "lucide-react";
 import Link from "next/link";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
+import { useSignals } from "@/lib/queries/useSignals";
+import { usePullToRefresh } from "@/hooks/usePullToRefresh";
+import PullToRefreshIndicator from "@/components/ui/PullToRefreshIndicator";
 
 // --- Types ---
 interface Signal {
   id: string;
-  type: string;
-  title: string;
-  time: string;
+  label: string;
   source: string;
   source_url?: string;
+  dimension: string;
+  points: number;
   severity: "high" | "medium" | "low";
-  location: string;
-  tags: string[];
+  family: string;
   target_id?: string;
   target_name?: string;
-  dimension?: string;
-  points?: number;
 }
 
 interface SignalCatalogEntry {
   id: string;
   label: string;
   dimension: string;
-  description: string;
+  family: string;
+  severity: string;
   points: number;
+  source: string;
 }
 
 const SEVERITY_FR: Record<string, string> = {
@@ -47,28 +48,20 @@ const DIMENSION_FR: Record<string, string> = {
 };
 
 export default function SignalsPage() {
+  const queryClient = useQueryClient();
+  const scrollRef = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All");
-  const [dimensionFilter, setDimensionFilter] = useState("All");
-  const [signals, setSignals] = useState<Signal[]>([]);
-  const [catalog, setCatalog] = useState<Record<string, SignalCatalogEntry[]>>({});
-  const [loading, setLoading] = useState(true);
   const [catalogOpen, setCatalogOpen] = useState(false);
 
-  useEffect(() => {
-    setLoading(true);
-    fetch(`/api/signals`)
-      .then(res => res.json())
-      .then(json => {
-        setSignals(json.data || []);
-        if (json.catalog) setCatalog(json.catalog);
-        setLoading(false);
-      })
-      .catch(err => {
-        console.error("Failed to fetch signals:", err);
-        setLoading(false);
-      });
-  }, []);
+  const { data, isLoading } = useSignals();
+
+  const handleRefresh = useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: ["signals"] });
+  }, [queryClient]);
+  const { isRefreshing, pullDistance } = usePullToRefresh(scrollRef, handleRefresh);
+  const signals = data?.data ?? [];
+  const catalog = data?.catalog ?? {};
 
   const severityCounts = useMemo(() => {
     const counts = { all: signals.length, high: 0, medium: 0, low: 0 };
@@ -83,7 +76,7 @@ export default function SignalsPage() {
   const dimensionCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     signals.forEach(s => {
-      const dim = s.dimension || s.type || "Autre";
+      const dim = s.dimension || "Autre";
       counts[dim] = (counts[dim] || 0) + 1;
     });
     return counts;
@@ -92,7 +85,7 @@ export default function SignalsPage() {
   const sectorHeat = useMemo(() => {
     const sectors: Record<string, { count: number; totalPoints: number }> = {};
     signals.forEach(s => {
-      const sectorTag = s.tags?.find(t => t !== s.type) || "Autre";
+      const sectorTag = s.family || s.dimension || "Autre";
       if (!sectors[sectorTag]) sectors[sectorTag] = { count: 0, totalPoints: 0 };
       sectors[sectorTag].count++;
       sectors[sectorTag].totalPoints += s.points || 0;
@@ -109,8 +102,8 @@ export default function SignalsPage() {
 
   const filteredSignals = useMemo(() => {
     return signals.filter(s => {
-      const matchSearch = s.title.toLowerCase().includes(search.toLowerCase()) ||
-                          s.type.toLowerCase().includes(search.toLowerCase()) ||
+      const matchSearch = s.label.toLowerCase().includes(search.toLowerCase()) ||
+                          s.dimension.toLowerCase().includes(search.toLowerCase()) ||
                           (s.target_name || "").toLowerCase().includes(search.toLowerCase());
       const matchFilter = filter === "All" || s.severity === filter.toLowerCase();
       const matchDimension = dimensionFilter === "All" || (s.dimension || s.type) === dimensionFilter;
@@ -202,11 +195,9 @@ export default function SignalsPage() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 lg:gap-8 flex-1 min-h-0">
 
         {/* Main Feed */}
-        <div className="lg:col-span-8 bg-black/40 border border-white/10 rounded-2xl sm:rounded-[2rem] lg:rounded-[2.5rem] overflow-hidden flex flex-col shadow-2xl backdrop-blur-xl">
-          <div className="px-4 py-3 sm:px-5 border-b border-white/10 bg-white/[0.02] flex flex-col gap-2">
-            {/* Severity row */}
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex gap-1.5 flex-wrap">
+        <div className="lg:col-span-8 bg-black/40 border border-white/10 rounded-[2.5rem] overflow-hidden flex flex-col shadow-2xl lg:backdrop-blur-xl">
+          <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between bg-white/[0.02] flex-wrap gap-2">
+             <div className="flex gap-2 flex-wrap">
                 {[
                   { key: "All", label: "Tous", count: severityCounts.all },
                   { key: "High", label: "Haute", count: severityCounts.high },
@@ -259,7 +250,8 @@ export default function SignalsPage() {
             )}
           </div>
 
-          <div className="flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6 space-y-3 sm:space-y-4 custom-scrollbar">
+          <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
+            <PullToRefreshIndicator pullDistance={pullDistance} isRefreshing={isRefreshing} />
             <AnimatePresence mode="popLayout">
               {filteredSignals.map((signal) => (
                 <motion.div
@@ -296,7 +288,7 @@ export default function SignalsPage() {
                         {SEVERITY_FR[signal.severity] || signal.severity}
                       </span>
                       <span className="text-[9px] font-black uppercase tracking-[0.15em] px-2.5 py-1 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/10">
-                        {signal.type}
+                        {DIMENSION_FR[signal.dimension] || signal.dimension}
                       </span>
                       {signal.points !== undefined && (
                         <span className="text-[9px] font-black uppercase tracking-[0.15em] px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/10">
@@ -304,12 +296,12 @@ export default function SignalsPage() {
                         </span>
                       )}
                       <span className="text-[10px] font-black text-gray-600 flex items-center gap-1.5 uppercase tracking-[0.15em]">
-                        <Clock size={11} /> {signal.time}
+                        <Clock size={11} /> {signal.source}
                       </span>
                     </div>
 
-                    <h3 className="text-base sm:text-lg lg:text-xl font-black text-white mb-2 sm:mb-3 group-hover:text-indigo-400 transition-colors tracking-tight leading-tight">
-                      {signal.title}
+                    <h3 className="text-lg md:text-xl font-black text-white mb-3 group-hover:text-indigo-400 transition-colors tracking-tight leading-tight">
+                      {signal.label}
                     </h3>
 
                     {/* Target + Dimension row */}
@@ -333,7 +325,7 @@ export default function SignalsPage() {
 
                     <div className="flex flex-wrap items-center gap-4">
                       <div className="flex items-center gap-2 text-[10px] font-black text-gray-500 uppercase tracking-widest bg-white/5 px-3 py-1.5 rounded-xl border border-white/5">
-                        <Globe size={14} className="opacity-50" /> {signal.location}
+                        <Globe size={14} className="opacity-50" /> {signal.family || signal.dimension}
                       </div>
                       {signal.source_url ? (
                         <a
@@ -349,13 +341,13 @@ export default function SignalsPage() {
                           <ShieldAlert size={14} className="opacity-50 text-indigo-500" /> {signal.source}
                         </div>
                       )}
-                      <div className="flex gap-2 ml-auto">
-                        {signal.tags?.map(tag => (
-                          <span key={tag} className="text-[9px] font-black text-gray-500 bg-indigo-500/5 px-2 py-1 rounded-md border border-indigo-500/10 uppercase tracking-widest">
-                            {tag}
+                      {signal.family && (
+                        <div className="flex gap-2 ml-auto">
+                          <span className="text-[9px] font-black text-gray-500 bg-indigo-500/5 px-2 py-1 rounded-md border border-indigo-500/10 uppercase tracking-widest">
+                            {signal.family}
                           </span>
-                        ))}
-                      </div>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -377,10 +369,10 @@ export default function SignalsPage() {
               ))}
             </AnimatePresence>
 
-            {filteredSignals.length === 0 && !loading && (
-              <div className="p-10 sm:p-16 lg:p-20 text-center flex flex-col items-center gap-4 sm:gap-6">
-                 <div className="w-16 h-16 sm:w-20 sm:h-20 bg-white/5 rounded-2xl sm:rounded-[2rem] flex items-center justify-center border border-white/10">
-                    <ShieldAlert size={32} className="text-gray-700 sm:hidden" /><ShieldAlert size={40} className="text-gray-700 hidden sm:block" />
+            {filteredSignals.length === 0 && !isLoading && (
+              <div className="p-20 text-center flex flex-col items-center gap-6">
+                 <div className="w-20 h-20 bg-white/5 rounded-[2rem] flex items-center justify-center border border-white/10">
+                    <ShieldAlert size={40} className="text-gray-700" />
                  </div>
                  <div>
                    <h2 className="text-white font-black text-xl sm:text-2xl mb-2 tracking-tighter">Aucun Signal Detecte</h2>
@@ -389,7 +381,7 @@ export default function SignalsPage() {
               </div>
             )}
 
-            {loading && (
+            {isLoading && (
               <div className="p-20 text-center flex flex-col items-center gap-6">
                  <div className="relative w-16 h-16">
                    <div className="absolute inset-0 border-4 border-indigo-500/10 rounded-full" />
@@ -404,8 +396,8 @@ export default function SignalsPage() {
         {/* Sidebar Analytics */}
         <div className="lg:col-span-4 flex flex-col gap-5 sm:gap-6 lg:gap-8 overflow-y-auto custom-scrollbar">
           {/* Sector Heat */}
-          <div className="p-5 sm:p-6 lg:p-8 rounded-2xl sm:rounded-[2rem] lg:rounded-[2.5rem] bg-black/40 border border-white/10 shadow-2xl backdrop-blur-xl flex-1 flex flex-col">
-            <h3 className="text-[10px] font-black text-gray-500 mb-5 sm:mb-6 lg:mb-8 uppercase tracking-[0.2em] flex items-center gap-2">
+          <div className="p-8 rounded-[2.5rem] bg-black/40 border border-white/10 shadow-2xl lg:backdrop-blur-xl flex-1 flex flex-col">
+            <h3 className="text-[10px] font-black text-gray-500 mb-8 uppercase tracking-[0.2em] flex items-center gap-2">
                <Globe size={16} className="text-indigo-400" /> Chaleur Sectorielle
             </h3>
             <div className="space-y-6 flex-1">
@@ -435,8 +427,8 @@ export default function SignalsPage() {
           </div>
 
           {/* Distribution par Dimension */}
-          <div className="p-5 sm:p-6 lg:p-8 rounded-2xl sm:rounded-[2rem] lg:rounded-[2.5rem] bg-black/40 border border-white/10 shadow-2xl backdrop-blur-xl">
-             <div className="flex items-center justify-between mb-5 sm:mb-6 lg:mb-8">
+          <div className="p-8 rounded-[2.5rem] bg-black/40 border border-white/10 shadow-2xl lg:backdrop-blur-xl">
+             <div className="flex items-center justify-between mb-8">
                 <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em] flex items-center gap-2">
                   <TrendingUp size={16} className="text-indigo-400" /> Distribution par Dimension
                 </h3>
@@ -462,7 +454,7 @@ export default function SignalsPage() {
           </div>
 
           {/* Signal Catalog */}
-          <div className="p-5 sm:p-6 lg:p-8 rounded-2xl sm:rounded-[2rem] lg:rounded-[2.5rem] bg-black/40 border border-white/10 shadow-2xl backdrop-blur-xl">
+          <div className="p-8 rounded-[2.5rem] bg-black/40 border border-white/10 shadow-2xl lg:backdrop-blur-xl">
             <button
               onClick={() => setCatalogOpen(!catalogOpen)}
               className="w-full flex items-center justify-between"
@@ -495,9 +487,9 @@ export default function SignalsPage() {
                         <div className="text-[11px] font-bold text-gray-300 leading-relaxed">
                           {entry.label}
                         </div>
-                        {entry.description && (
+                        {entry.family && (
                           <div className="text-[10px] text-gray-500 mt-1 leading-relaxed">
-                            {entry.description}
+                            {entry.family}
                           </div>
                         )}
                       </div>

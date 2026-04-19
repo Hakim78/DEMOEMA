@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# DEMOEMA agent CLI — invoque un agent via HTTP platform.
+# Usage :
+#   demoema-agent list
+#   demoema-agent <agent-name> "prompt"
+#   demoema-agent <agent-name> -f prompt.txt
+#
+# Auth : exporter DEMOEMA_PLATFORM_URL + DEMOEMA_PLATFORM_API_KEY
+# ou utiliser les defaults ci-dessous.
+
+set -euo pipefail
+
+URL="${DEMOEMA_PLATFORM_URL:-https://agents.demoema.fr}"
+KEY="${DEMOEMA_PLATFORM_API_KEY:-}"
+
+[[ -n "$KEY" ]] || { echo "❌ DEMOEMA_PLATFORM_API_KEY non défini"; exit 1; }
+
+cmd="${1:-help}"
+
+case "$cmd" in
+  help|-h|--help)
+    cat <<EOF
+DEMOEMA agent CLI
+
+  demoema-agent list
+      Liste les 15 agents disponibles
+
+  demoema-agent info <agent-name>
+      Détails d'un agent (model, tools, description)
+
+  demoema-agent <agent-name> "prompt"
+      Invoque un agent avec streaming SSE
+
+  demoema-agent <agent-name> -f prompt.txt
+      Lit le prompt depuis un fichier
+
+Agents principaux : lead-data-engineer · backend-engineer · frontend-engineer ·
+  devops-sre · ma-product-designer · commercial-advisor · rgpd-ai-act-reviewer ·
+  investor-pitch-advisor · ml-scoring-engineer · legal-counsel · copy-content-writer ·
+  docs-maintainer · atlassian-sync · qa-engineer · bug-hunter
+EOF
+    ;;
+
+  list)
+    curl -fsSL -H "X-API-Key: $KEY" "$URL/agents" | jq -r '.[] | "\(.name)  [\(.model)]  \(.description)"' | column -t -s '  '
+    ;;
+
+  info)
+    agent="${2:?usage: demoema-agent info <agent-name>}"
+    curl -fsSL -H "X-API-Key: $KEY" "$URL/agents/$agent" | jq .
+    ;;
+
+  models)
+    curl -fsSL -H "X-API-Key: $KEY" "$URL/models" | jq .
+    ;;
+
+  *)
+    agent="$cmd"
+    shift
+    if [[ "${1:-}" == "-f" ]]; then
+      prompt="$(cat "${2:?fichier manquant}")"
+    else
+      prompt="${*:-}"
+    fi
+    [[ -n "$prompt" ]] || { echo "❌ prompt requis"; exit 1; }
+
+    body=$(jq -n --arg p "$prompt" '{prompt: $p, history: []}')
+    curl -fsSL -N -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+      -d "$body" \
+      "$URL/agents/$agent/invoke" \
+      | while IFS= read -r line; do
+          case "$line" in
+            event:*)    current_event="${line#event:}" ; current_event="${current_event// /}" ;;
+            data:*)     payload="${line#data:}"
+                        case "$current_event" in
+                          token)       echo -n "$(echo "$payload" | jq -r '.delta // empty')" ;;
+                          tool_call)   echo -e "\n🔧 tool_call $(echo "$payload" | jq -c '{name, args}')" ;;
+                          tool_result) echo -e "\n✔ tool_result $(echo "$payload" | jq -r '.name')" ;;
+                          done)        echo -e "\n— fin ($(echo "$payload" | jq -r '.stop_reason // "ok"'))" ;;
+                          error)       echo -e "\n❌ $(echo "$payload" | jq -r '.error')" ;;
+                          start)       echo -e "▶ $(echo "$payload" | jq -r '"[\(.agent) / \(.model)]"')" ;;
+                        esac
+                        ;;
+          esac
+        done
+    ;;
+esac
