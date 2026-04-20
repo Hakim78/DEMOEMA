@@ -239,7 +239,13 @@ async def generate_fetcher(source_id: str, feedback: str | None = None) -> dict:
 
 
 async def discover_and_generate(source_id: str, max_iterations: int = 3) -> dict:
-    """Mode C : generate + test_endpoint + retry avec feedback (max 3 iter)."""
+    """Mode C : generate + test_endpoint + retry avec feedback (max 3 iter).
+
+    Critère de SUCCESS durci (2026-04-20) : un fetcher n'est considéré valide QUE s'il
+    remonte effectivement des données (rows > 0) OU si la source est légitimement vide
+    (upstream confirme 0). Un stub `manual_research_needed` est désormais classé en
+    `status='degraded_no_data'` et NON success — le Maintainer pourra re-tenter.
+    """
     from tools.http import test_endpoint as test_ep_func
     spec = load_spec(source_id)
     if not spec:
@@ -259,7 +265,9 @@ async def discover_and_generate(source_id: str, max_iterations: int = 3) -> dict
             ep_fb = (f"⚠️ L'endpoint spec {spec.get('endpoint')} retourne status "
                      f"{endpoint_test.get('status')} ({endpoint_test.get('error', 'no content')}). "
                      f"RECHERCHE une URL alternative réelle : data.gouv.fr, opendatasoft, api.gouv.fr. "
-                     f"Si aucune URL publique connue, écris un fetcher qui retourne rows=0 + skipped='manual_research_needed'.")
+                     f"PAS DE STUB 'manual_research_needed' : il faut du code qui fetch réellement. "
+                     f"Si aucune URL publique fonctionnelle, retourne un fetcher qui raise "
+                     f"NotImplementedError('aucune source publique trouvée') — il sera logué proprement.")
             current_feedback = ((current_feedback or "") + "\n" + ep_fb) if current_feedback else ep_fb
 
         gen_result = await generate_fetcher(source_id, feedback=current_feedback)
@@ -281,20 +289,38 @@ async def discover_and_generate(source_id: str, max_iterations: int = 3) -> dict
                 dry = await fetcher()
                 history[-1]["dry_run"] = dry
                 rows = dry.get("rows", 0) if isinstance(dry, dict) else 0
-                skipped = (dry or {}).get("skipped", "")
-                if rows > 0 or skipped == "manual_research_needed":
+                skipped = (dry or {}).get("skipped", "") or (dry or {}).get("skipped_reason", "")
+
+                # ─── Succès réel uniquement si rows > 0 ───
+                if rows > 0:
                     log.info("[discover] %s SUCCESS iter %d rows=%d", source_id, iteration, rows)
-                    return {"source_id": source_id, "status": "success", "iterations": iteration,
-                            "rows": rows, "skipped": skipped, "history": history}
-                current_feedback = (f"Fetcher généré mais retourne 0 rows. dry_run={dry}. "
+                    return {"source_id": source_id, "status": "success",
+                            "iterations": iteration, "rows": rows, "history": history}
+
+                # ─── Stubs 'manual_research_needed' explicitement refusés ───
+                if skipped == "manual_research_needed":
+                    log.warning("[discover] %s iter %d : stub manual_research_needed refusé comme success",
+                                source_id, iteration)
+                    current_feedback = (
+                        "❌ Ton code précédent a retourné skipped='manual_research_needed' avec rows=0. "
+                        "C'est REFUSÉ. Tu dois trouver une source de données réelle publique "
+                        "(data.gouv.fr, opendatasoft, dumps CSV, RSS, HTML parseable). "
+                        "Explore plusieurs URL alternatives. Un fetcher qui ne fetche pas n'est pas acceptable."
+                    )
+                    continue
+
+                current_feedback = (f"Fetcher généré mais retourne 0 rows (dry_run={dry}). "
                                    f"Causes possibles : endpoint filtre trop restrictif, parsing format incorrect, "
-                                   f"auth requise. Examine + corrige.")
+                                   f"auth requise. Examine + corrige. Objectif: rows > 0.")
         except Exception as e:
             current_feedback = f"Erreur à l'exécution : {type(e).__name__}: {e}. Fix."
             history[-1]["exec_error"] = str(e)
 
-    return {"source_id": source_id, "status": "manual_review_needed",
-            "iterations": max_iterations, "history": history}
+    # ─── Epuisement des iter sans succès réel : 'degraded_no_data' au lieu de success ───
+    log.warning("[discover] %s DEGRADED_NO_DATA après %d iter", source_id, max_iterations)
+    return {"source_id": source_id, "status": "degraded_no_data",
+            "iterations": max_iterations, "history": history,
+            "note": "Aucune iter n'a remonté de rows. À examiner manuellement ou à rééssayer après backoff."}
 
 
 def _build_trigger(s: str):

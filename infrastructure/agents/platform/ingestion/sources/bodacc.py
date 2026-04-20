@@ -28,6 +28,19 @@ INCREMENTAL_HOURS = 48
 BULK_BATCH_SIZE = 1000  # commit tous les 1000 rows
 
 
+async def count_upstream() -> int | None:
+    """Compteur amont BODACC via OpenDataSoft (endpoint ?limit=0 → total_count)."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(BODACC_ENDPOINT, params={"limit": 0})
+            if r.status_code != 200:
+                return None
+            v = r.json().get("total_count")
+            return int(v) if isinstance(v, int) and v >= 0 else None
+    except Exception:
+        return None
+
+
 async def fetch_bodacc_full() -> dict:
     """FULL historical BODACC via /exports/csv streaming (48M annonces).
     CSV = stream ligne par ligne, plus reliable que JSON array.

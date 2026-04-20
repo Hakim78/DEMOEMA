@@ -230,3 +230,44 @@ async def ingestion_generate_fetcher(source_id: str) -> dict:
 async def ingestion_discover(source_id: str, iterations: int = 3) -> dict:
     """Mode C : generate + test_endpoint + retry avec feedback (max N iter)."""
     return await discover_and_generate(source_id, max_iterations=iterations)
+
+
+# ─── Agent openclaw : browser-driving (DeepSeek + Playwright) ────────────────
+
+@app.post("/agents/openclaw/run", dependencies=[Depends(require_api_key)])
+async def openclaw_run(payload: dict) -> dict:
+    """Lance l'agent openclaw sur une tâche.
+
+    Body JSON :
+      { "task": "...", "source_id": "insee_sirene_v3" (optional), "max_steps": 30 }
+    Retour : transcript, screenshots paths, credentials si extraits.
+    """
+    task = (payload or {}).get("task")
+    if not task:
+        raise HTTPException(400, "field 'task' required")
+    source_id = (payload or {}).get("source_id")
+    max_steps = int((payload or {}).get("max_steps") or 30)
+    if max_steps < 1 or max_steps > 60:
+        raise HTTPException(400, "max_steps must be in [1, 60]")
+    try:
+        from openclaw import run_openclaw
+    except ImportError as e:
+        raise HTTPException(500, f"openclaw indisponible: {e}")
+    return await run_openclaw(task, source_id=source_id, max_steps=max_steps)
+
+
+# ─── Agent source-hunter : trouve URL d'API via data.gouv.fr ────────────────
+
+@app.post("/agents/source-hunter/hunt/{source_id}", dependencies=[Depends(require_api_key)])
+async def source_hunter_run(source_id: str, max_steps: int = 15) -> dict:
+    """Lance l'agent source-hunter pour une source.
+
+    Cherche dans data.gouv.fr la bonne URL, patche le spec, teste.
+    """
+    if max_steps < 1 or max_steps > 30:
+        raise HTTPException(400, "max_steps must be in [1, 30]")
+    try:
+        from source_hunter import hunt_source
+    except ImportError as e:
+        raise HTTPException(500, f"source-hunter indisponible: {e}")
+    return await hunt_source(source_id, max_steps=max_steps)
