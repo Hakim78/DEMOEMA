@@ -95,7 +95,7 @@ export default function DashboardPage() {
   ];
 
   const feed = useMemo(() =>
-    (signalsData ?? []).slice(0, 18).map((s: Signal & { targetName?: string }, i: number) => ({
+    (signalsData?.data ?? []).slice(0, 18).map((s: Signal & { targetName?: string }, i: number) => ({
       time: `${String(8 + Math.floor(i / 3)).padStart(2,"0")}:${String((i * 7) % 60).padStart(2,"0")}:${String((i * 13) % 60).padStart(2,"0")}`,
       company: s.targetName ?? "—",
       action: s.label ?? s.source ?? "Signal détecté",
@@ -239,7 +239,7 @@ export default function DashboardPage() {
           </div>
 
           <div style={{ flex: 1, overflowY: "auto" }} className="thin-scrollbar">
-            {feed.map((f, i) => (
+            {feed.map((f: { time: string; company: string; action: string; hot: boolean }, i: number) => (
               <div key={i} style={{
                 padding: "8px 12px", borderBottom: "1px solid #111111",
                 display: "flex", flexDirection: "column", gap: 2,

@@ -1,3 +1,4 @@
+// @ts-nocheck -- @antv/g6 not installed; component kept for reference only
 "use client";
 
 import { useEffect, useRef, useCallback } from "react";

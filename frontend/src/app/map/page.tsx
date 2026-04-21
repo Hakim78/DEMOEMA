@@ -272,7 +272,7 @@ export default function MapPage() {
               {[...(data?.data ?? [])].sort((a, b) => b.globalScore - a.globalScore).slice(0, 12).map((t, i) => (
                 <button key={t.id} onClick={() => setSelected(t)} style={{
                   width: "100%", display: "flex", alignItems: "center",
-                  padding: "8px 12px", borderBottom: "1px solid #0D0D0D",
+                  padding: "8px 12px",
                   background: "transparent", border: "none", borderBottom: "1px solid #0D0D0D",
                   cursor: "pointer", textAlign: "left",
                 }}
